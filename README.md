@@ -13,11 +13,12 @@ inspection, correction, override, commitment, and final authority.
 
 ## Current phase
 
-Phases 0–2 are accepted. Phase 3 implements the next thin vertical slice: frozen
-Delivery Baseline → AI materialization plan → human routing/exception review and
-batch authorization → owner-target execution → read-after-write reconciliation →
-Execution Truth and drift. Internal execution is the real core target; PM Again
-remains an explicit adapter boundary and is not claimed live.
+Phases 0–3 are accepted. Phase 4 implements the closed-loop slice: healthy
+Execution Truth → AI-prepared, human-controlled QA Scope → validation and
+append-only result history → evidence truth → Acceptance Package → deterministic,
+owner-only Final Acceptance. Internal validation is operational. QA Again remains
+an explicit adapter boundary and is not claimed live without an authorized OIDA
+service identity.
 
 The Phase 0 definition begins at [Product Vision](docs/00_OIDA_2_PRODUCT_VISION.md),
 continues through the [Phase 1 Recommendation](docs/17_OIDA_2_PHASE1_RECOMMENDATION.md),
@@ -61,8 +62,8 @@ pytest
 ```
 
 SQLite migrations run once at startup in filename order from `migrations/`. Local
-data is stored under `data/` by default. Phase 3 needs no vector database, graph
-database, event bus, QA, Infra, or Conductor runtime. External execution projection
+data is stored under `data/` by default. Phase 4 needs no vector database, graph
+database, event bus, or external QA runtime for its Internal closed loop. External execution projection
 freshness defaults to 900 seconds and is configured with
 `EXECUTION_FRESHNESS_SECONDS`.
 
@@ -80,3 +81,6 @@ with final Gate 2 evidence in the
 
 Phase 3 documentation starts at [Phase 3 Scope](docs/phase3/00_PHASE3_SCOPE.md)
 and concludes with the [Phase 3 Final Report](docs/phase3/12_PHASE3_FINAL_REPORT.md).
+
+Phase 4 documentation starts at [Phase 4 Scope](docs/phase4/00_PHASE4_SCOPE.md)
+and concludes with the [Phase 4 Final Report](docs/phase4/13_PHASE4_FINAL_REPORT.md).

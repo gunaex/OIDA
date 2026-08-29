@@ -79,6 +79,24 @@ def test_deepseek_valid_structured_output_and_metrics(monkeypatch):
     assert adapter.last_metrics.provider_request_id == "deepseek-request-1"
 
 
+def test_deepseek_bounded_repair_aggregates_billable_metrics(monkeypatch):
+    configured(monkeypatch)
+    calls=[]
+    def post(*args,**kwargs):
+        calls.append(kwargs["json"])
+        if len(calls)==1:
+            return response("not-json",usage={"prompt_tokens":20,"prompt_cache_hit_tokens":0,"completion_tokens":10,"total_tokens":30})
+        return response(valid_solution_json(),usage={"prompt_tokens":25,"prompt_cache_hit_tokens":5,"completion_tokens":15,"total_tokens":40})
+    monkeypatch.setattr(ai.httpx,"post",post)
+    adapter=ai.DeepSeekAdapter();output=adapter.generate_solutions(baseline())
+    assert len(output.alternatives)==3 and len(calls)==2
+    assert calls[1]["messages"][1]["content"].find('"repair_attempt":1')!=-1
+    assert adapter.last_metrics.input_tokens==45
+    assert adapter.last_metrics.cache_hit_tokens==5
+    assert adapter.last_metrics.output_tokens==25
+    assert adapter.last_metrics.total_tokens==70
+
+
 @pytest.mark.parametrize("content", ["not-json", json.dumps({"alternatives": [], "findings": []})])
 def test_deepseek_rejects_malformed_or_schema_invalid_output(monkeypatch, content):
     configured(monkeypatch)
