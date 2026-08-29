@@ -184,3 +184,24 @@ Do not start Phase 3 yet. First configure the authorized live provider, run and
 review the canonical live Solution/Delivery flow, record quality/cost/latency and
 close the operational blocker. After explicit approval, Phase 3 may begin from the
 frozen Delivery Baseline with execution and validation only.
+
+## Phase 2.1 Operational Closure Attempt — 2026-08-29
+
+Phase 2.1 revalidated all 31 automated tests, Python/JavaScript checks and the
+secret scan. `AI_PROVIDER=openai` was exercised against a realistic frozen
+Requirement Baseline without a configured credential. It produced an explicit
+failed AI run with `AI_UNAVAILABLE`, zero candidates, zero committed solutions and
+no Delivery Baseline mutation. The Requirement Baseline remained frozen.
+
+Because neither the process environment nor a workspace `.env` contained
+`OPENAI_API_KEY`, live solution quality, plan quality, traceability, provider usage,
+latency and cost could not be evaluated. Formal status therefore remains:
+
+```text
+LIVE_AI_ACCEPTANCE=BLOCKED_NOT_CONFIGURED
+PHASE_2_ACCEPTANCE=READY_WITH_OPERATIONAL_BLOCKER
+PHASE_3_READY=NO
+PHASE2_TAG=none
+```
+
+Detailed evidence is in `11_PHASE2_LIVE_AI_ACCEPTANCE.md`.
