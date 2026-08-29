@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .ai import (
     AIError,
+    AIGroundingInsufficient,
+    AIInvalidOutput,
     DeliveryItemOutput,
     DeliveryPlanOutput,
     DependencyOutput,
@@ -175,7 +177,10 @@ def materialize_solution_run(db, project_id, actor, body, supersedes=None):
         output = adapter.generate_solutions(baseline, body.instruction)
         ids = []
         for option in output.alternatives:
-            validate_solution(option, baseline)
+            try:
+                validate_solution(option, baseline)
+            except HTTPException as exc:
+                raise AIGroundingInsufficient("Solution output failed exact baseline coverage validation") from exc
             candidate_id, content = uid("scand"), option.model_dump()
             db.execute("INSERT INTO solution_candidates VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
                 candidate_id, project_id, run_id, baseline.baseline_id, "NEEDS_REVIEW", option.title, option.summary,
@@ -437,7 +442,11 @@ def materialize_plan_run(db, project_id, actor, body, supersedes=None):
     db.execute("INSERT INTO delivery_plan_ai_runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(run_id,project_id,actor.id,adapter.provider,adapter.model,"delivery-plan/v1",body.instruction,latest["id"],solution["revision_id"],"RUNNING",None,"[]",stamp,None))
     audit(db,project_id,f"ai:{run_id}","AI","AI_DELIVERY_PLAN_RUN_STARTED","DELIVERY_PLAN_AI_RUN",run_id,detail={"solution_revision_id":solution["revision_id"]})
     try:
-        output=adapter.generate_delivery_plan(baseline,solution_content,body.instruction); validate_plan(output,baseline,solution_content)
+        output=adapter.generate_delivery_plan(baseline,solution_content,body.instruction)
+        try:
+            validate_plan(output,baseline,solution_content)
+        except HTTPException as exc:
+            raise AIInvalidOutput("Delivery plan output failed reference or dependency validation") from exc
         candidate_id=uid("pcand"); content=output.model_dump()
         db.execute("INSERT INTO delivery_plan_candidates VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(candidate_id,project_id,run_id,latest["id"],solution["revision_id"],"NEEDS_REVIEW",output.title,dumps(content),dumps(content),1,0,"AI",supersedes,None,f"ai:{run_id}",stamp,stamp))
         db.execute("INSERT INTO delivery_plan_candidate_revisions VALUES (?,?,?,?,?,?,?,?)",(uid("pcrev"),candidate_id,project_id,1,dumps(content),f"ai:{run_id}","AI",stamp))
@@ -611,6 +620,18 @@ def list_plans(project_id: str,actor: Actor=Depends(current_actor)):
     return result
 
 
+@router.get("/design-ai-runs")
+def list_design_ai_runs(project_id: str, actor: Actor=Depends(current_actor)):
+    require_project(actor,project_id)
+    with connect() as db:
+        solutions=db.execute("SELECT id,'SOLUTION' run_type,provider,model,prompt_version,requirement_baseline_id,NULL solution_revision_id,status,failure_code,findings_json,started_at,completed_at FROM solution_ai_runs WHERE project_id=?",(project_id,)).fetchall()
+        plans=db.execute("SELECT id,'DELIVERY_PLAN' run_type,provider,model,prompt_version,requirement_baseline_id,solution_revision_id,status,failure_code,findings_json,started_at,completed_at FROM delivery_plan_ai_runs WHERE project_id=?",(project_id,)).fetchall()
+    rows=[]
+    for row in [*solutions,*plans]:
+        item=dict(row);item["findings"]=json.loads(item.pop("findings_json"));rows.append(item)
+    return sorted(rows,key=lambda x:x["started_at"],reverse=True)
+
+
 def gate2_readiness(db, project_id):
     blockers=[]; latest=latest_baseline(db,project_id); solution=current_solution(db,project_id)
     plan=db.execute("SELECT p.*,pr.id revision_id,pr.requirement_baseline_id,pr.solution_revision_id,pr.content_json FROM delivery_plans p JOIN delivery_plan_revisions pr ON pr.plan_id=p.id AND pr.revision=p.current_revision WHERE p.project_id=? ORDER BY p.updated_at DESC LIMIT 1",(project_id,)).fetchone()
@@ -690,14 +711,19 @@ def phase2_truth_projection(project_id: str):
         baseline=db.execute("SELECT * FROM delivery_baselines WHERE project_id=? ORDER BY version DESC LIMIT 1",(project_id,)).fetchone()
         solution_pending=db.execute("SELECT COUNT(*) FROM solution_candidates WHERE project_id=? AND status IN ('NEEDS_REVIEW','SELECTED')",(project_id,)).fetchone()[0]
         plan_pending=db.execute("SELECT COUNT(*) FROM delivery_plan_candidates WHERE project_id=? AND status='NEEDS_REVIEW'",(project_id,)).fetchone()[0]
+        solution_run=db.execute("SELECT status,failure_code FROM solution_ai_runs WHERE project_id=? ORDER BY started_at DESC LIMIT 1",(project_id,)).fetchone()
+        plan_run=db.execute("SELECT status,failure_code FROM delivery_plan_ai_runs WHERE project_id=? ORDER BY started_at DESC LIMIT 1",(project_id,)).fetchone()
     attention=[]
     if not baseline:
         if readiness["ready"]: attention.append({"type":"GATE_2","message":"Delivery baseline is ready for human freeze.","severity":"HIGH"})
         elif readiness["blocking_items"] and readiness["blocking_items"]!=["GATE_1_NOT_FROZEN"]: attention.append({"type":"DELIVERY_BASELINE_BLOCKED","message":", ".join(readiness["blocking_items"]),"severity":"HIGH"})
     if solution_pending: attention.append({"type":"SOLUTION_REVIEW","message":f"{solution_pending} solution candidate(s) need a decision.","severity":"MEDIUM"})
     if plan_pending: attention.append({"type":"DELIVERY_PLAN_REVIEW","message":f"{plan_pending} delivery plan candidate(s) need review.","severity":"MEDIUM"})
+    if solution_run and solution_run["status"]=="FAILED": attention.append({"type":"SOLUTION_AI_FAILURE","message":solution_run["failure_code"],"severity":"HIGH"})
+    if plan_run and plan_run["status"]=="FAILED": attention.append({"type":"DELIVERY_PLAN_AI_FAILURE","message":plan_run["failure_code"],"severity":"HIGH"})
     return {"solution":{"status":"COMMITTED" if solution else "NONE","solution_code":solution["solution_code"] if solution else None,"revision_id":solution["revision_id"] if solution else None},
             "delivery_plan":{"status":"COMMITTED" if plan else "NONE","plan_code":plan["plan_code"] if plan else None,"revision_id":plan["revision_id"] if plan else None},
+            "design_ai":{"latest_solution_run_status":solution_run["status"] if solution_run else "NOT_RUN","latest_solution_failure_code":solution_run["failure_code"] if solution_run else None,"latest_plan_run_status":plan_run["status"] if plan_run else "NOT_RUN","latest_plan_failure_code":plan_run["failure_code"] if plan_run else None},
             "delivery_baseline":({"status":"FROZEN","id":baseline["id"],"version":baseline["version"],"frozen_by":baseline["frozen_by"],"frozen_at":baseline["frozen_at"]} if baseline else {"status":"NONE","version":None}),
             "delivery_readiness":"GATE_2_COMPLETE" if baseline else ("READY_TO_FREEZE" if readiness["ready"] else "BLOCKED"),
             "delivery_blocking_items":readiness["blocking_items"],"phase2_attention":attention,

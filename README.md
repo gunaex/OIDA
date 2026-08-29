@@ -13,9 +13,10 @@ inspection, correction, override, commitment, and final authority.
 
 ## Current phase
 
-Phase 0 is accepted. Phase 1 implements the first thin vertical slice: project
-context → AI requirement candidates → human control → committed requirements →
-frozen Requirement Baseline → Project Truth.
+Phase 0 and Phase 1 are accepted. Phase 2 implements the next thin vertical slice:
+frozen Requirement Baseline → AI solution alternatives → human compare/edit/
+reject/regenerate/select/merge → committed solution → AI delivery plan → human
+editing → frozen Delivery Baseline (Gate 2) → Project Truth.
 
 The Phase 0 definition begins at [Product Vision](docs/00_OIDA_2_PRODUCT_VISION.md),
 continues through the [Phase 1 Recommendation](docs/17_OIDA_2_PHASE1_RECOMMENDATION.md),
@@ -47,10 +48,14 @@ an `OPENAI_API_KEY` for the optional live adapter. Provider keys stay server-sid
 pytest
 ```
 
-SQLite schema migration runs at startup from `migrations/001_phase1.sql`. Local
-data is stored under `data/` by default. Phase 1 needs no cloud service, vector
+SQLite migrations run once at startup in filename order from `migrations/`. Local
+data is stored under `data/` by default. Phase 2 needs no cloud service, vector
 database, graph database, event bus, PM, QA, Infra, or Conductor runtime.
 
 Phase 1 documentation starts at
 [Phase 1 Scope](docs/phase1/00_PHASE1_SCOPE.md) and concludes with the
 [Phase 1 Final Report](docs/phase1/09_PHASE1_FINAL_REPORT.md).
+
+Phase 2 documentation starts at
+[Phase 2 Scope](docs/phase2/00_PHASE2_SCOPE.md) and concludes with the
+[Phase 2 Final Report](docs/phase2/10_PHASE2_FINAL_REPORT.md).

@@ -172,3 +172,18 @@ def test_invalid_solution_coverage_is_rejected(client, owner, project):
     content["requirement_coverage"] = []
     response = client.patch(f"/api/projects/{project['id']}/solution-candidates/{result['candidate_ids'][0]}", json={"content":content})
     assert response.status_code == 422
+
+
+def test_solution_ai_failure_is_recorded_and_visible(client, owner, project, monkeypatch):
+    from app.ai import DisabledAdapter
+    establish_gate1(client, project, "p2-disabled")
+    monkeypatch.setattr("app.phase2.adapter_for", lambda: DisabledAdapter())
+    response = client.post(f"/api/projects/{project['id']}/ai/solutions:generate",
+        headers={"Idempotency-Key":"p2-disabled-gen"}, json={})
+    assert response.status_code == 200
+    assert response.json()["status"] == "FAILED" and response.json()["failure_code"] == "AI_UNAVAILABLE"
+    runs = client.get(f"/api/projects/{project['id']}/design-ai-runs").json()
+    assert runs[0]["status"] == "FAILED" and runs[0]["run_type"] == "SOLUTION"
+    truth = client.get(f"/api/projects/{project['id']}/truth").json()
+    assert truth["design_ai"]["latest_solution_failure_code"] == "AI_UNAVAILABLE"
+    assert any(x["type"] == "SOLUTION_AI_FAILURE" for x in truth["attention"])

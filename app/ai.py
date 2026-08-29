@@ -145,7 +145,7 @@ class DependencyOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     predecessor_ref: str
     successor_ref: str
-    dependency_type: Literal["FINISH_TO_START", "START_TO_START"] = "FINISH_TO_START"
+    dependency_type: Literal["FINISH_TO_START", "START_TO_START"]
 
 
 class DeliveryPlanOutput(BaseModel):
