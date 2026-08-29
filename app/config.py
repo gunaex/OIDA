@@ -16,6 +16,7 @@ class Settings:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    execution_freshness_seconds: int = int(os.getenv("EXECUTION_FRESHNESS_SECONDS", "900"))
 
     @property
     def database_path(self) -> str:

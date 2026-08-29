@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="OIDA 2.0", version="2.0-phase2", lifespan=lifespan)
+app = FastAPI(title="OIDA 2.0", version="2.0-phase3", lifespan=lifespan)
 app.mount("/assets", StaticFiles(directory="web"), name="assets")
 
 
@@ -127,7 +127,7 @@ def index():
 
 
 @app.get("/healthz")
-def health(): return {"status": "READY", "phase": 2}
+def health(): return {"status": "READY", "phase": 3}
 
 
 @app.post("/api/auth/login")
@@ -554,6 +554,13 @@ def project_truth(project_id: str, actor: Actor = Depends(current_actor)):
     truth["attention"].extend(phase2["phase2_attention"])
     if phase2["next_recommended_phase"]:
         truth["next_recommended_phase"] = phase2["next_recommended_phase"]
+    from .phase3 import execution_truth_projection
+    phase3 = execution_truth_projection(project_id)
+    truth.update({key:value for key,value in phase3.items() if key not in {"execution_attention","execution_next_action"}})
+    truth["attention"].extend(phase3["execution_attention"])
+    if phase3["execution_next_action"] == "Prepare QA scope":
+        truth["next_recommended_phase"] = "PHASE_4_QA_EVIDENCE_AND_FINAL_ACCEPTANCE"
+    truth["next_action"] = phase3["execution_next_action"]
     return truth
 
 
@@ -566,4 +573,6 @@ def list_audit(project_id: str, actor: Actor = Depends(current_actor)):
 
 
 from .phase2 import router as phase2_router
+from .phase3 import router as phase3_router
 app.include_router(phase2_router)
+app.include_router(phase3_router)

@@ -13,10 +13,11 @@ inspection, correction, override, commitment, and final authority.
 
 ## Current phase
 
-Phase 0 and Phase 1 are accepted. Phase 2 implements the next thin vertical slice:
-frozen Requirement Baseline → AI solution alternatives → human compare/edit/
-reject/regenerate/select/merge → committed solution → AI delivery plan → human
-editing → frozen Delivery Baseline (Gate 2) → Project Truth.
+Phases 0–2 are accepted. Phase 3 implements the next thin vertical slice: frozen
+Delivery Baseline → AI materialization plan → human routing/exception review and
+batch authorization → owner-target execution → read-after-write reconciliation →
+Execution Truth and drift. Internal execution is the real core target; PM Again
+remains an explicit adapter boundary and is not claimed live.
 
 The Phase 0 definition begins at [Product Vision](docs/00_OIDA_2_PRODUCT_VISION.md),
 continues through the [Phase 1 Recommendation](docs/17_OIDA_2_PHASE1_RECOMMENDATION.md),
@@ -60,8 +61,10 @@ pytest
 ```
 
 SQLite migrations run once at startup in filename order from `migrations/`. Local
-data is stored under `data/` by default. Phase 2 needs no cloud service, vector
-database, graph database, event bus, PM, QA, Infra, or Conductor runtime.
+data is stored under `data/` by default. Phase 3 needs no vector database, graph
+database, event bus, QA, Infra, or Conductor runtime. External execution projection
+freshness defaults to 900 seconds and is configured with
+`EXECUTION_FRESHNESS_SECONDS`.
 
 Phase 1 documentation starts at
 [Phase 1 Scope](docs/phase1/00_PHASE1_SCOPE.md) and concludes with the
@@ -74,3 +77,6 @@ provider status is in the
 [DeepSeek Provider and Live Acceptance](docs/phase2/12_DEEPSEEK_PROVIDER_AND_LIVE_ACCEPTANCE.md),
 with final Gate 2 evidence in the
 [DeepSeek Live Closure Report](docs/phase2/13_PHASE2_DEEPSEEK_LIVE_CLOSURE_FINAL_REPORT.md).
+
+Phase 3 documentation starts at [Phase 3 Scope](docs/phase3/00_PHASE3_SCOPE.md)
+and concludes with the [Phase 3 Final Report](docs/phase3/12_PHASE3_FINAL_REPORT.md).

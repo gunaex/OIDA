@@ -20,6 +20,6 @@ def test_phase1_database_upgrades_once_to_phase2(tmp_path, monkeypatch):
     tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     versions = {row[0] for row in connection.execute("SELECT version FROM schema_migrations")}
     connection.close()
-    assert {"next_solution_number", "next_plan_number"}.issubset(project_columns)
-    assert {"solution_candidates", "delivery_plans", "delivery_baselines", "ai_run_telemetry"}.issubset(tables)
-    assert versions == {"001_phase1", "002_phase2_delivery_design", "003_ai_provider_telemetry"}
+    assert {"next_solution_number", "next_plan_number", "next_execution_number"}.issubset(project_columns)
+    assert {"solution_candidates", "delivery_plans", "delivery_baselines", "ai_run_telemetry", "materialization_plans", "execution_items", "execution_drift_records"}.issubset(tables)
+    assert versions == {"001_phase1", "002_phase2_delivery_design", "003_ai_provider_telemetry", "004_phase3_execution_truth"}
