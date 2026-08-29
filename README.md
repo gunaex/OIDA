@@ -71,4 +71,6 @@ Phase 2 documentation starts at
 [Phase 2 Scope](docs/phase2/00_PHASE2_SCOPE.md). Structural closure is recorded in
 the [Phase 2 Final Report](docs/phase2/10_PHASE2_FINAL_REPORT.md), and current live
 provider status is in the
-[DeepSeek Provider and Live Acceptance](docs/phase2/12_DEEPSEEK_PROVIDER_AND_LIVE_ACCEPTANCE.md).
+[DeepSeek Provider and Live Acceptance](docs/phase2/12_DEEPSEEK_PROVIDER_AND_LIVE_ACCEPTANCE.md),
+with final Gate 2 evidence in the
+[DeepSeek Live Closure Report](docs/phase2/13_PHASE2_DEEPSEEK_LIVE_CLOSURE_FINAL_REPORT.md).

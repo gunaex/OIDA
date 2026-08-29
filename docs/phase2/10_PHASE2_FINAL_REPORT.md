@@ -223,3 +223,24 @@ The fake adapter and mocked responses are not counted as live evidence. Therefor
 the Phase 2 tag remains intentionally absent and Phase 3 remains not ready.
 
 Detailed evidence: `12_DEEPSEEK_PROVIDER_AND_LIVE_ACCEPTANCE.md`.
+
+## Phase 2.1B Live Closure — 2026-08-29
+
+The credential was subsequently made available and rotated after a preflight
+placement error was detected. The active credential was never printed, tracked,
+committed or retained in Git history. A restarted, isolated acceptance run used
+`deepseek-v4-pro` with high reasoning effort and completed the canonical flow.
+
+DeepSeek produced three materially different solution strategies, all covering
+the nine frozen requirements. A human edited, rejected, regenerated, selected and
+idempotently committed `SOL-001`. DeepSeek then produced a 24-item delivery plan;
+a human edited it, added and removed work, changed dependencies and idempotently
+committed `PLAN-001`. An authorized human owner froze Delivery Baseline v1 with
+exact Requirement Baseline, solution revision and plan revision membership.
+
+All nine sampled requirement-to-component-to-item traces are valid. Gate 2
+read-after-write, idempotency, immutability regression, Project Truth, 39 automated
+tests, compile, JavaScript, runtime and final secret/history scans pass. Phase 2 is
+accepted locally and Phase 3 is ready to be considered, but no Phase 3 work was
+started. The final evidence is in
+`13_PHASE2_DEEPSEEK_LIVE_CLOSURE_FINAL_REPORT.md`.
