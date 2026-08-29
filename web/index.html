@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>OIDA 2.0</title><link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <header><a href="#" id="brand">OIDA <span>2.0</span></a><div id="identity"></div></header>
+  <main>
+    <section id="login" class="narrow panel">
+      <p class="eyebrow">AI-first project delivery</p><h1>Sign in to your workspace</h1>
+      <form id="login-form"><label>Email<input name="email" type="email" required></label>
+        <label>Password<input name="password" type="password" required></label><button>Sign in</button></form>
+    </section>
+    <section id="projects" hidden>
+      <div class="title-row"><div><p class="eyebrow">Projects</p><h1>What needs to move forward?</h1></div><button id="new-project">Create project</button></div>
+      <div id="project-list" class="grid"></div>
+    </section>
+    <section id="workspace" hidden>
+      <button class="link" id="back">← Projects</button><div id="workspace-head"></div>
+      <nav><button data-view="overview" class="active">Overview</button><button data-view="context">Context</button><button data-view="requirements">Requirements</button><button data-view="audit">Audit</button></nav>
+      <div id="view"></div>
+    </section>
+  </main>
+  <dialog id="dialog"><form method="dialog" id="dialog-form"><div id="dialog-body"></div><div class="actions"><button value="cancel" class="secondary">Cancel</button><button value="default" id="dialog-submit">Save</button></div></form></dialog>
+  <div id="toast" hidden></div><script src="/assets/app.js"></script>
+</body></html>
+
