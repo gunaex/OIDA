@@ -205,3 +205,6 @@ PHASE2_TAG=none
 ```
 
 Detailed evidence is in `11_PHASE2_LIVE_AI_ACCEPTANCE.md`.
+
+The previously empty GitHub remote now contains the non-force-pushed
+`oida-2-main` branch. No acceptance tag was pushed.

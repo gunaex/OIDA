@@ -173,7 +173,8 @@ GATE_2_OPERATIONAL=YES_STRUCTURAL
 PHASE_3_READY=NO
 
 FINAL_TAG=none
-REMOTE_PUSH=SKIPPED
+REMOTE_PUSH=PASS
+REMOTE_BRANCH=oida-2-main
 ```
 
 Required next action: configure `OPENAI_API_KEY` in the server process without
