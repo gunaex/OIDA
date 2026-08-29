@@ -179,3 +179,24 @@ REMOTE_BRANCH=oida-2-main
 
 Required next action: configure `OPENAI_API_KEY` in the server process without
 committing it, then rerun this Phase 2.1 acceptance from the canonical live project.
+
+## Phase 2.1A Provider Update — 2026-08-29
+
+This document remains the immutable record of the earlier OpenAI closure attempt.
+DeepSeek is now the selected live acceptance provider, implemented through the
+same provider-neutral domain contract. The integration and mocked failure matrix
+pass, but `DEEPSEEK_API_KEY` is absent from both the process and workspace. No
+authenticated call or live artifact was fabricated.
+
+```text
+LIVE_PROVIDER_SELECTED=DEEPSEEK
+DEEPSEEK_ADAPTER=PASS
+DEEPSEEK_LIVE_AUTH=BLOCKED_NOT_CONFIGURED
+LIVE_AI_ACCEPTANCE=BLOCKED_NOT_CONFIGURED
+PHASE_2_ACCEPTANCE=READY_WITH_OPERATIONAL_BLOCKER
+PHASE_3_READY=NO
+FINAL_TAG=none
+```
+
+The complete integration, telemetry, pricing and acceptance evidence is in
+`12_DEEPSEEK_PROVIDER_AND_LIVE_ACCEPTANCE.md`.

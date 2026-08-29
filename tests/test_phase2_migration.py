@@ -21,5 +21,5 @@ def test_phase1_database_upgrades_once_to_phase2(tmp_path, monkeypatch):
     versions = {row[0] for row in connection.execute("SELECT version FROM schema_migrations")}
     connection.close()
     assert {"next_solution_number", "next_plan_number"}.issubset(project_columns)
-    assert {"solution_candidates", "delivery_plans", "delivery_baselines"}.issubset(tables)
-    assert versions == {"001_phase1", "002_phase2_delivery_design"}
+    assert {"solution_candidates", "delivery_plans", "delivery_baselines", "ai_run_telemetry"}.issubset(tables)
+    assert versions == {"001_phase1", "002_phase2_delivery_design", "003_ai_provider_telemetry"}

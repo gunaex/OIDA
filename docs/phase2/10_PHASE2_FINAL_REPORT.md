@@ -208,3 +208,18 @@ Detailed evidence is in `11_PHASE2_LIVE_AI_ACCEPTANCE.md`.
 
 The previously empty GitHub remote now contains the non-force-pushed
 `oida-2-main` branch. No acceptance tag was pushed.
+
+## Phase 2.1A DeepSeek Integration — 2026-08-29
+
+The provider-neutral boundary now includes a production-oriented DeepSeek Chat
+Completions adapter with JSON mode, application schema validation, thinking mode,
+configurable reasoning effort, normalized auth/rate/timeout/output failures and
+persistent token/latency/request telemetry. Unknown provider values fail closed.
+All 39 automated tests pass, including eight mocked DeepSeek cases.
+
+`DEEPSEEK_API_KEY` was not available, so authenticated reachability, meaningful
+live output, human live review, live Gate 2 freeze and observed cost remain blocked.
+The fake adapter and mocked responses are not counted as live evidence. Therefore
+the Phase 2 tag remains intentionally absent and Phase 3 remains not ready.
+
+Detailed evidence: `12_DEEPSEEK_PROVIDER_AND_LIVE_ACCEPTANCE.md`.

@@ -17,6 +17,7 @@ from .ai import AIError, ContextInput, adapter_for
 from .auth import Actor, bootstrap_user, current_actor, issue_session, require_project, verify_password
 from .config import settings
 from .db import connect, migrate, now, transaction
+from .telemetry import record_ai_telemetry
 
 log = logging.getLogger("oida")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -255,15 +256,18 @@ def generate_use_case(db, project_id: str, actor: Actor, body: GenerateIn, super
                 dumps(normalized), f"ai:{run_id}", "AI", stamp))
             candidate_ids.append(candidate_id)
         db.execute("UPDATE ai_runs SET status='SUCCEEDED',findings_json=?,completed_at=? WHERE id=?", (dumps(output.findings), now(), run_id))
+        telemetry = record_ai_telemetry(db, project_id, "REQUIREMENT", run_id, adapter)
         audit(db, project_id, f"ai:{run_id}", "AI", "AI_REQUIREMENT_RUN_COMPLETED", "AI_RUN", run_id,
               detail={"candidate_count": len(candidate_ids), "duration_ms": round((time.monotonic()-started)*1000, 2)})
         return {"ai_run_id": run_id, "status": "SUCCEEDED", "candidate_ids": candidate_ids, "findings": output.findings,
-                "provider": adapter.provider, "model": adapter.model, "context_revision": project["context_revision"]}
+                "provider": adapter.provider, "model": adapter.model, "context_revision": project["context_revision"],
+                "telemetry": telemetry}
     except AIError as exc:
         db.execute("UPDATE ai_runs SET status='FAILED',failure_code=?,completed_at=? WHERE id=?", (exc.code, now(), run_id))
+        telemetry = record_ai_telemetry(db, project_id, "REQUIREMENT", run_id, adapter, exc.code)
         audit(db, project_id, f"ai:{run_id}", "AI", "AI_REQUIREMENT_RUN_FAILED", "AI_RUN", run_id, "FAILED", {"failure_code": exc.code})
         return {"ai_run_id": run_id, "status": "FAILED", "failure_code": exc.code, "message": str(exc),
-                "provider": adapter.provider, "context_revision": project["context_revision"]}
+                "provider": adapter.provider, "context_revision": project["context_revision"], "telemetry": telemetry}
 
 
 @app.post("/api/projects/{project_id}/ai/requirements:generate")
@@ -283,7 +287,15 @@ def list_runs(project_id: str, actor: Actor = Depends(current_actor)):
     require_project(actor, project_id)
     with connect() as db:
         rows = db.execute("SELECT * FROM ai_runs WHERE project_id=? ORDER BY started_at DESC", (project_id,)).fetchall()
-    return [unpack(x) for x in rows]
+        telemetry = {row["run_id"]: dict(row) for row in db.execute(
+            "SELECT run_id,reasoning_effort,input_tokens,cache_hit_tokens,output_tokens,total_tokens,latency_ms,provider_request_id,error_class "
+            "FROM ai_run_telemetry WHERE project_id=? AND run_kind='REQUIREMENT'", (project_id,)).fetchall()}
+    result = []
+    for row in rows:
+        item = unpack(row)
+        item["telemetry"] = telemetry.get(item["id"])
+        result.append(item)
+    return result
 
 
 @app.get("/api/projects/{project_id}/requirement-candidates")

@@ -21,6 +21,7 @@ from .ai import (
 )
 from .auth import Actor, current_actor, require_project
 from .db import connect, now, transaction
+from .telemetry import record_ai_telemetry
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["phase2"])
 
@@ -191,16 +192,19 @@ def materialize_solution_run(db, project_id, actor, body, supersedes=None):
             ids.append(candidate_id)
         db.execute("UPDATE solution_ai_runs SET status='SUCCEEDED',findings_json=?,completed_at=? WHERE id=?",
                    (dumps(output.findings), now(), run_id))
+        telemetry = record_ai_telemetry(db, project_id, "SOLUTION", run_id, adapter)
         audit(db, project_id, f"ai:{run_id}", "AI", "AI_SOLUTION_RUN_COMPLETED", "SOLUTION_AI_RUN", run_id,
               detail={"alternative_count": len(ids), "duration_ms": round((time.monotonic()-started)*1000, 2)})
         return {"ai_run_id": run_id, "status":"SUCCEEDED", "candidate_ids":ids, "findings":output.findings,
-                "provider":adapter.provider, "model":adapter.model, "requirement_baseline_id":baseline.baseline_id}
+                "provider":adapter.provider, "model":adapter.model, "requirement_baseline_id":baseline.baseline_id,
+                "telemetry":telemetry}
     except AIError as exc:
         db.execute("UPDATE solution_ai_runs SET status='FAILED',failure_code=?,completed_at=? WHERE id=?", (exc.code, now(), run_id))
+        telemetry = record_ai_telemetry(db, project_id, "SOLUTION", run_id, adapter, exc.code)
         audit(db, project_id, f"ai:{run_id}", "AI", "AI_SOLUTION_RUN_FAILED", "SOLUTION_AI_RUN", run_id,
               "FAILED", {"failure_code":exc.code})
         return {"ai_run_id":run_id, "status":"FAILED", "failure_code":exc.code, "message":str(exc),
-                "provider":adapter.provider, "requirement_baseline_id":baseline.baseline_id}
+                "provider":adapter.provider, "requirement_baseline_id":baseline.baseline_id, "telemetry":telemetry}
 
 
 @router.get("/solution-readiness")
@@ -451,12 +455,14 @@ def materialize_plan_run(db, project_id, actor, body, supersedes=None):
         db.execute("INSERT INTO delivery_plan_candidates VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(candidate_id,project_id,run_id,latest["id"],solution["revision_id"],"NEEDS_REVIEW",output.title,dumps(content),dumps(content),1,0,"AI",supersedes,None,f"ai:{run_id}",stamp,stamp))
         db.execute("INSERT INTO delivery_plan_candidate_revisions VALUES (?,?,?,?,?,?,?,?)",(uid("pcrev"),candidate_id,project_id,1,dumps(content),f"ai:{run_id}","AI",stamp))
         db.execute("UPDATE delivery_plan_ai_runs SET status='SUCCEEDED',findings_json=?,completed_at=? WHERE id=?",(dumps(output.findings),now(),run_id))
+        telemetry=record_ai_telemetry(db,project_id,"DELIVERY_PLAN",run_id,adapter)
         audit(db,project_id,f"ai:{run_id}","AI","AI_DELIVERY_PLAN_RUN_COMPLETED","DELIVERY_PLAN_AI_RUN",run_id,detail={"item_count":len(output.items)})
-        return {"ai_run_id":run_id,"status":"SUCCEEDED","candidate_id":candidate_id,"provider":adapter.provider,"model":adapter.model,"requirement_baseline_id":latest["id"],"solution_revision_id":solution["revision_id"]}
+        return {"ai_run_id":run_id,"status":"SUCCEEDED","candidate_id":candidate_id,"provider":adapter.provider,"model":adapter.model,"requirement_baseline_id":latest["id"],"solution_revision_id":solution["revision_id"],"telemetry":telemetry}
     except AIError as exc:
         db.execute("UPDATE delivery_plan_ai_runs SET status='FAILED',failure_code=?,completed_at=? WHERE id=?",(exc.code,now(),run_id))
+        telemetry=record_ai_telemetry(db,project_id,"DELIVERY_PLAN",run_id,adapter,exc.code)
         audit(db,project_id,f"ai:{run_id}","AI","AI_DELIVERY_PLAN_RUN_FAILED","DELIVERY_PLAN_AI_RUN",run_id,"FAILED",{"failure_code":exc.code})
-        return {"ai_run_id":run_id,"status":"FAILED","failure_code":exc.code,"message":str(exc),"provider":adapter.provider}
+        return {"ai_run_id":run_id,"status":"FAILED","failure_code":exc.code,"message":str(exc),"provider":adapter.provider,"telemetry":telemetry}
 
 
 @router.post("/ai/delivery-plans:generate")
@@ -626,9 +632,12 @@ def list_design_ai_runs(project_id: str, actor: Actor=Depends(current_actor)):
     with connect() as db:
         solutions=db.execute("SELECT id,'SOLUTION' run_type,provider,model,prompt_version,requirement_baseline_id,NULL solution_revision_id,status,failure_code,findings_json,started_at,completed_at FROM solution_ai_runs WHERE project_id=?",(project_id,)).fetchall()
         plans=db.execute("SELECT id,'DELIVERY_PLAN' run_type,provider,model,prompt_version,requirement_baseline_id,solution_revision_id,status,failure_code,findings_json,started_at,completed_at FROM delivery_plan_ai_runs WHERE project_id=?",(project_id,)).fetchall()
+        telemetry={row["run_id"]:dict(row) for row in db.execute(
+            "SELECT run_id,reasoning_effort,input_tokens,cache_hit_tokens,output_tokens,total_tokens,latency_ms,provider_request_id,error_class "
+            "FROM ai_run_telemetry WHERE project_id=? AND run_kind IN ('SOLUTION','DELIVERY_PLAN')",(project_id,)).fetchall()}
     rows=[]
     for row in [*solutions,*plans]:
-        item=dict(row);item["findings"]=json.loads(item.pop("findings_json"));rows.append(item)
+        item=dict(row);item["findings"]=json.loads(item.pop("findings_json"));item["telemetry"]=telemetry.get(item["id"]);rows.append(item)
     return sorted(rows,key=lambda x:x["started_at"],reverse=True)
 
 

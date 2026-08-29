@@ -184,6 +184,7 @@ def test_solution_ai_failure_is_recorded_and_visible(client, owner, project, mon
     assert response.json()["status"] == "FAILED" and response.json()["failure_code"] == "AI_UNAVAILABLE"
     runs = client.get(f"/api/projects/{project['id']}/design-ai-runs").json()
     assert runs[0]["status"] == "FAILED" and runs[0]["run_type"] == "SOLUTION"
+    assert runs[0]["telemetry"]["error_class"] == "AI_UNAVAILABLE"
     truth = client.get(f"/api/projects/{project['id']}/truth").json()
     assert truth["design_ai"]["latest_solution_failure_code"] == "AI_UNAVAILABLE"
     assert any(x["type"] == "SOLUTION_AI_FAILURE" for x in truth["attention"])

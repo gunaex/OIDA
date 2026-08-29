@@ -1,7 +1,7 @@
 # Phase 2 Known Gaps
 
-- Live OpenAI acceptance is blocked until an authorized server-side credential is
-  configured and the canonical flow is run against the live provider.
+- Live acceptance remains blocked until an authorized server-side DeepSeek
+  credential is configured and the canonical flow is run against that provider.
 - The browser uses a validated structured JSON editor for deep solution/plan edits;
   richer field-specific forms and visual dependency editing are future UX work.
 - Browser automation and visual-regression testing are not included; API Golden

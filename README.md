@@ -41,8 +41,19 @@ Environment files are not loaded implicitly. Export the selected values from
 with the configured bootstrap identity.
 
 `AI_PROVIDER=disabled` is the honest default. Set `AI_PROVIDER=fake` only for the
-clearly labeled deterministic local/test adapter, or set `AI_PROVIDER=openai` with
-an `OPENAI_API_KEY` for the optional live adapter. Provider keys stay server-side.
+clearly labeled deterministic local/test adapter. Live adapters are selected with
+`AI_PROVIDER=openai` plus `OPENAI_API_KEY`, or with the following DeepSeek setup:
+
+```bash
+export AI_PROVIDER=deepseek
+export AI_MODEL=deepseek-v4-pro
+export AI_REASONING_EFFORT=high
+export DEEPSEEK_API_KEY='set-in-your-secret-manager'
+export DEEPSEEK_BASE_URL=https://api.deepseek.com
+```
+
+Provider keys stay server-side. An unknown `AI_PROVIDER` fails explicitly with
+`AI_PROVIDER_INVALID`; it never falls back to the fake or another live provider.
 
 ```bash
 pytest
@@ -57,5 +68,7 @@ Phase 1 documentation starts at
 [Phase 1 Final Report](docs/phase1/09_PHASE1_FINAL_REPORT.md).
 
 Phase 2 documentation starts at
-[Phase 2 Scope](docs/phase2/00_PHASE2_SCOPE.md) and concludes with the
-[Phase 2 Final Report](docs/phase2/10_PHASE2_FINAL_REPORT.md).
+[Phase 2 Scope](docs/phase2/00_PHASE2_SCOPE.md). Structural closure is recorded in
+the [Phase 2 Final Report](docs/phase2/10_PHASE2_FINAL_REPORT.md), and current live
+provider status is in the
+[DeepSeek Provider and Live Acceptance](docs/phase2/12_DEEPSEEK_PROVIDER_AND_LIVE_ACCEPTANCE.md).

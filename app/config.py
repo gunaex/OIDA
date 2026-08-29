@@ -12,7 +12,10 @@ class Settings:
     bootstrap_name: str = os.getenv("OIDA_BOOTSTRAP_NAME", "Project Owner")
     ai_provider: str = os.getenv("AI_PROVIDER", "disabled")
     ai_model: str = os.getenv("AI_MODEL", "gpt-5.5")
+    ai_reasoning_effort: str = os.getenv("AI_REASONING_EFFORT", "high")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
+    deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
     @property
     def database_path(self) -> str:
