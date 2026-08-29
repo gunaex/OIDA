@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 
 _test_dir = tempfile.mkdtemp(prefix="oida-phase1-tests-")
-os.environ["DATABASE_URL"] = f"sqlite:///{_test_dir}/oida.db"
+os.environ.setdefault("DATABASE_URL", f"sqlite:///{_test_dir}/oida.db")
 os.environ["AI_PROVIDER"] = "fake"
 os.environ["OIDA_SESSION_SECRET"] = "test-secret-not-for-production"
 os.environ["OIDA_BOOTSTRAP_EMAIL"] = "owner@example.com"
@@ -41,4 +41,3 @@ def create_project(client, suffix=""):
 @pytest.fixture
 def project(client, owner, request):
     return create_project(client, request.node.name)
-

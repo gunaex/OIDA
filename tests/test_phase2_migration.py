@@ -22,4 +22,4 @@ def test_phase1_database_upgrades_once_to_phase2(tmp_path, monkeypatch):
     connection.close()
     assert {"next_solution_number", "next_plan_number", "next_execution_number", "next_qa_number", "next_validation_number", "next_evidence_number", "next_acceptance_number"}.issubset(project_columns)
     assert {"solution_candidates", "delivery_plans", "delivery_baselines", "ai_run_telemetry", "materialization_plans", "execution_items", "execution_drift_records", "qa_scopes", "validation_results", "evidence_records", "acceptance_packages", "final_acceptances"}.issubset(tables)
-    assert versions == {"001_phase1", "002_phase2_delivery_design", "003_ai_provider_telemetry", "004_phase3_execution_truth", "005_phase4_validation_acceptance"}
+    assert versions == {"001_phase1", "002_phase2_delivery_design", "003_ai_provider_telemetry", "004_phase3_execution_truth", "005_phase4_validation_acceptance", "006_phase4_5_pilot_integrations"}

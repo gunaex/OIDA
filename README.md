@@ -84,3 +84,6 @@ and concludes with the [Phase 3 Final Report](docs/phase3/12_PHASE3_FINAL_REPORT
 
 Phase 4 documentation starts at [Phase 4 Scope](docs/phase4/00_PHASE4_SCOPE.md)
 and concludes with the [Phase 4 Final Report](docs/phase4/13_PHASE4_FINAL_REPORT.md).
+## Cloud pilot packaging
+
+The application supports SQLite for local development and PostgreSQL for cloud pilot truth. `OIDA_ENV=pilot` fails startup unless PostgreSQL, a strong session secret/password, secure cookies, and an explicit origin allowlist are configured. See `docs/cloud/` and the checked-in Docker/Fly/Cloudflare examples. These artifacts do not imply a remote deployment exists.

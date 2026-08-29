@@ -7,10 +7,13 @@ from pathlib import Path
 import time
 import uuid
 from typing import Literal, Optional
+from collections import defaultdict, deque
+from threading import Lock
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .ai import AIError, ContextInput, adapter_for
@@ -66,18 +69,56 @@ def require_key(value: Optional[str]) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    failures = settings.validate_runtime()
+    if failures:
+        raise RuntimeError("Unsafe runtime configuration: " + ",".join(failures))
     migrate()
     bootstrap_user()
     yield
 
 
-app = FastAPI(title="OIDA 2.0", version="2.0-phase4", lifespan=lifespan)
+app = FastAPI(title="OIDA 2.0", version="2.0-phase4.5B", lifespan=lifespan)
+if settings.allowed_origins:
+    app.add_middleware(CORSMiddleware, allow_origins=list(settings.allowed_origins),
+                       allow_credentials=True, allow_methods=["GET","POST","PATCH","PUT","DELETE"],
+                       allow_headers=["Content-Type","Idempotency-Key"])
+
+@app.middleware("http")
+async def origin_csrf_guard(request: Request, call_next):
+    if settings.production and request.method in {"POST","PATCH","PUT","DELETE"}:
+        origin = request.headers.get("origin")
+        if not origin or origin not in settings.allowed_origins:
+            return Response(content='{"detail":"Origin validation failed"}', status_code=403, media_type="application/json")
+    return await call_next(request)
 app.mount("/assets", StaticFiles(directory="web"), name="assets")
 
 
 class LoginIn(BaseModel):
     email: str
     password: str
+
+
+_login_attempts = defaultdict(deque)
+_login_lock = Lock()
+
+
+def _check_login_rate(request: Request):
+    address = request.client.host if request.client else "unknown"
+    cutoff = time.monotonic() - 60
+    with _login_lock:
+        attempts = _login_attempts[address]
+        while attempts and attempts[0] < cutoff: attempts.popleft()
+        if len(attempts) >= settings.login_attempts_per_minute:
+            raise HTTPException(429, "Too many login attempts; retry later")
+    return address
+
+
+def _record_login_failure(address: str):
+    with _login_lock: _login_attempts[address].append(time.monotonic())
+
+
+def _clear_login_failures(address: str):
+    with _login_lock: _login_attempts.pop(address, None)
 
 
 class ProjectIn(BaseModel):
@@ -126,24 +167,52 @@ def index():
     return FileResponse(Path("web/index.html"))
 
 
+def _health_payload(check_database=False):
+    database = "NOT_CHECKED"
+    if check_database:
+        try:
+            with connect() as db: db.execute("SELECT 1").fetchone()
+            database = "READY"
+        except Exception: database = "ERROR"
+    return {"status": "READY" if database != "ERROR" else "NOT_READY", "version": settings.build_version,
+            "phase": "4.5B", "database": database,
+            "ai_provider": settings.ai_provider, "ai_configured": bool(settings.deepseek_api_key or settings.openai_api_key)}
+
 @app.get("/healthz")
-def health(): return {"status": "READY", "phase": 4}
+@app.get("/health")
+def health(): return _health_payload(False)
+
+@app.get("/ready")
+def ready():
+    payload = _health_payload(True)
+    if payload["status"] != "READY": raise HTTPException(503, detail=payload)
+    return payload
 
 
 @app.post("/api/auth/login")
-def login(body: LoginIn, response: Response):
+def login(body: LoginIn, request: Request, response: Response):
+    address = _check_login_rate(request)
     with connect() as db:
         row = db.execute("SELECT * FROM users WHERE email=?", (body.email.lower(),)).fetchone()
     if not row or not verify_password(body.password, row["password_hash"]):
+        _record_login_failure(address)
+        with transaction() as db:
+            audit(db, None, "anonymous", "HUMAN", "LOGIN_FAILED", "USER", None, "BLOCKED_AUTH",
+                  {"email_sha256": __import__("hashlib").sha256(body.email.lower().encode()).hexdigest()})
         raise HTTPException(401, "Invalid credentials")
+    _clear_login_failures(address)
     response.set_cookie("oida_session", issue_session(row["id"]), httponly=True, samesite="strict",
                         secure=settings.cookie_secure, max_age=43200)
+    with transaction() as db:
+        audit(db, None, row["id"], "HUMAN", "LOGIN_SUCCEEDED", "USER", row["id"])
     return {"id": row["id"], "email": row["email"], "display_name": row["display_name"], "actor_type": "HUMAN"}
 
 
 @app.post("/api/auth/logout")
-def logout(response: Response):
-    response.delete_cookie("oida_session")
+def logout(response: Response, actor: Actor = Depends(current_actor)):
+    response.delete_cookie("oida_session", secure=settings.cookie_secure, samesite="strict")
+    with transaction() as db:
+        audit(db, None, actor.id, "HUMAN", "LOGOUT_SUCCEEDED", "USER", actor.id)
     return {"status": "SIGNED_OUT"}
 
 
@@ -568,6 +637,8 @@ def project_truth(project_id: str, actor: Actor = Depends(current_actor)):
     truth["next_action"] = phase4["phase4_next_action"]
     if phase4["gate3_status"] == "ACCEPTED":
         truth["next_recommended_phase"] = "PHASE_5_CHANGE_IMPACT_REBASELINE_INTELLIGENCE"
+    from .phase45 import integration_truth_projection
+    truth.update(integration_truth_projection(project_id))
     return truth
 
 
@@ -582,6 +653,8 @@ def list_audit(project_id: str, actor: Actor = Depends(current_actor)):
 from .phase2 import router as phase2_router
 from .phase3 import router as phase3_router
 from .phase4 import router as phase4_router
+from .phase45 import router as phase45_router
 app.include_router(phase2_router)
 app.include_router(phase3_router)
 app.include_router(phase4_router)
+app.include_router(phase45_router)

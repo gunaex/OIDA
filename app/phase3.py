@@ -627,7 +627,11 @@ def verify_binding(project_id: str,binding_id: str,actor: Actor=Depends(current_
     with transaction() as db:
         row=db.execute("SELECT * FROM execution_bindings WHERE id=? AND project_id=?",(binding_id,project_id)).fetchone()
         if not row:raise HTTPException(404,"Execution binding not found")
-        try:adapter_for_target(row["target_type"]).get_work_item(db,project_id,binding_id,"OIDA_BINDING_PROBE");status="READY"
-        except TargetUnavailable:status="ERROR"
+        try:
+            adapter=adapter_for_target(row["target_type"])
+            verifier=getattr(adapter,"verify_project",None)
+            if not verifier: raise TargetUnavailable("Target cannot verify projects")
+            verifier(row["external_project_id"]);status="READY"
+        except ExecutionTargetError:status="ERROR"
         db.execute("UPDATE execution_bindings SET status=?,last_verified_at=?,updated_at=? WHERE id=?",(status,now(),now(),binding_id));audit(db,project_id,actor.id,"HUMAN","EXECUTION_BINDING_VERIFIED","EXECUTION_BINDING",binding_id,result="SUCCESS" if status=="READY" else "FAILED",detail={"status":status})
     return {"id":binding_id,"status":status}

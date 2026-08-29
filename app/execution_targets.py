@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Protocol
 
+import httpx
+
+from .config import settings
+
 
 @dataclass(frozen=True)
 class TargetCapabilities:
@@ -20,7 +24,9 @@ class TargetCapabilities:
 
 CAPABILITIES = {
     "INTERNAL": TargetCapabilities("INTERNAL", True, True, True, True, True, True),
-    "PM_AGAIN": TargetCapabilities("PM_AGAIN", True, True, True, True, False, True),
+    # PM Again's normal task contract supports owner/priority/status. Its phase
+    # field is not claimed as a full milestone/dependency model.
+    "PM_AGAIN": TargetCapabilities("PM_AGAIN", True, True, False, False, True, True),
     "MANUAL_EXTERNAL": TargetCapabilities("MANUAL_EXTERNAL", True, True, True, False, False, False),
 }
 
@@ -142,21 +148,80 @@ class ManualExternalAdapter:
 
 
 class PmAgainExecutionAdapter:
-    """Contract boundary only; PM Again has no configured service task-write API in this environment."""
+    """Authorized human-token adapter to PM Again's normal project/task API."""
     target_type = "PM_AGAIN"
     capabilities = CAPABILITIES[target_type]
 
+    def __init__(self):
+        if not settings.pm_again_url or not settings.pm_again_api_key:
+            raise TargetUnavailable("PM Again URL and API token are required")
+        self.base = settings.pm_again_url.rstrip("/")
+        self.headers = {"Authorization": f"Bearer {settings.pm_again_api_key}"}
+
+    def _request(self, method: str, path: str, json_body=None):
+        try:
+            response = httpx.request(method, f"{self.base}{path}", headers=self.headers,
+                                     json=json_body, timeout=settings.integration_timeout_seconds)
+        except httpx.TimeoutException as exc:
+            raise TargetTimeout("PM Again timed out; reconciliation is required") from exc
+        if response.status_code == 404: return None
+        if response.status_code >= 400:
+            raise TargetCreateFailed(f"PM Again returned HTTP {response.status_code}")
+        return response.json()
+
+    def _binding(self, db, project_id, binding_id):
+        row = db.execute("SELECT * FROM execution_bindings WHERE id=? AND project_id=? AND target_type='PM_AGAIN'",
+                         (binding_id, project_id)).fetchone()
+        if not row or row["status"] != "READY": raise TargetUnavailable("PM Again binding is not READY")
+        return row
+
+    def verify_project(self, external_project_id: str) -> dict:
+        value = self._request("GET", f"/api/projects/{external_project_id}")
+        if not value: raise TargetUnavailable("PM Again project was not found")
+        return value
+
+    @staticmethod
+    def _item(x) -> TargetItem:
+        status = {"Todo":"NOT_STARTED", "InProgress":"IN_PROGRESS", "Blocked":"BLOCKED",
+                  "Done":"COMPLETED", "Cancelled":"CANCELLED"}.get(x.get("status"), "NOT_STARTED")
+        return TargetItem(str(x["id"]), x.get("title", ""), x.get("description") or x.get("desc") or "",
+                          x.get("owner") or x.get("owner_role"),
+                          {"High":"HIGH", "Med":"MEDIUM", "Low":"LOW"}.get(x.get("priority"), x.get("priority", "MEDIUM")),
+                          None, [], status, x.get("url"))
+
     def create_work_item(self, db, request: TargetCreateRequest) -> TargetItem:
-        raise TargetUnavailable("PM Again service task-write integration is not configured")
+        binding = self._binding(db, request.project_id, request.binding_id)
+        # Stable OIDA key lets a retry recover an ambiguous create without duplication.
+        stable_key = request.idempotency_key
+        for item in self.list_project_work(db, request.project_id, request.binding_id):
+            if stable_key in item.description: return item
+        body = {"title": request.title,
+                "desc": f"{request.description}\n\nOIDA-IDEMPOTENCY: {stable_key}",
+                "owner": request.owner_role,
+                "priority": {"HIGH":"High", "MEDIUM":"Med", "LOW":"Low"}.get(request.priority, "Med"),
+                "status": "Todo", "phase": request.milestone_ref}
+        value = self._request("POST", f"/api/{binding['external_project_id']}/tasks", body)
+        if not value: raise TargetCreateFailed("PM Again create returned no item")
+        return self._item(value)
 
     def get_work_item(self, db, project_id: str, binding_id: Optional[str], external_id: str) -> Optional[TargetItem]:
-        raise TargetUnavailable("PM Again service task-read integration is not configured")
+        return next((x for x in self.list_project_work(db, project_id, binding_id) if x.external_id == str(external_id)), None)
 
     def update_work_item(self, db, project_id: str, binding_id: Optional[str], external_id: str, changes: dict) -> TargetItem:
-        raise TargetUnavailable("PM Again service task-update integration is not configured")
+        binding = self._binding(db, project_id, binding_id)
+        body = dict(changes)
+        if "description" in body: body["desc"] = body.pop("description")
+        if "owner_role" in body: body["owner"] = body.pop("owner_role")
+        if "priority" in body: body["priority"] = {"HIGH":"High", "MEDIUM":"Med", "LOW":"Low"}.get(body["priority"], body["priority"])
+        if "status" in body: body["status"] = {"NOT_STARTED":"Todo", "IN_PROGRESS":"InProgress", "BLOCKED":"Blocked", "COMPLETED":"Done", "CANCELLED":"Cancelled"}.get(body["status"], body["status"])
+        value = self._request("PUT", f"/api/{binding['external_project_id']}/tasks/{external_id}", body)
+        if not value: raise TargetCreateFailed("PM Again task is unavailable")
+        return self._item(value)
 
     def list_project_work(self, db, project_id: str, binding_id: Optional[str]) -> list[TargetItem]:
-        raise TargetUnavailable("PM Again service task-list integration is not configured")
+        binding = self._binding(db, project_id, binding_id)
+        value = self._request("GET", f"/api/{binding['external_project_id']}/tasks") or []
+        return [self._item(x) for x in value]
 
 
 class DeterministicExternalAdapter:
@@ -181,6 +246,10 @@ class DeterministicExternalAdapter:
                                                  request.priority, request.milestone_ref, request.dependencies,
                                                  external_url=f"https://pm.invalid/tasks/{external_id}")
         return self.items[external_id]
+
+    def verify_project(self, external_project_id: str) -> dict:
+        if self.mode == "failure": raise TargetUnavailable("simulated target failure")
+        return {"id": external_project_id, "name": "Deterministic PM Project"}
 
     def get_work_item(self, db, project_id: str, binding_id: Optional[str], external_id: str) -> Optional[TargetItem]:
         if self.mode == "readback_missing":
