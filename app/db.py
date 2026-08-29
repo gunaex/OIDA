@@ -36,6 +36,17 @@ def transaction():
 
 def migrate() -> None:
     with connect() as db:
-        db.executescript(Path("migrations/001_phase1.sql").read_text())
-        db.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES (?,?)", ("001_phase1", now()))
-
+        # Phase 1 creates the migration ledger. Apply every later migration once,
+        # in filename order, so accepted migrations remain immutable.
+        for path in sorted(Path("migrations").glob("*.sql")):
+            if path.name != "001_phase1.sql":
+                applied = db.execute(
+                    "SELECT 1 FROM schema_migrations WHERE version=?", (path.stem,)
+                ).fetchone()
+                if applied:
+                    continue
+            db.executescript(path.read_text())
+            db.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES (?,?)",
+                (path.stem, now()),
+            )

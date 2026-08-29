@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="OIDA 2.0", version="2.0-phase1", lifespan=lifespan)
+app = FastAPI(title="OIDA 2.0", version="2.0-phase2", lifespan=lifespan)
 app.mount("/assets", StaticFiles(directory="web"), name="assets")
 
 
@@ -126,7 +126,7 @@ def index():
 
 
 @app.get("/healthz")
-def health(): return {"status": "READY", "phase": 1}
+def health(): return {"status": "READY", "phase": 2}
 
 
 @app.post("/api/auth/login")
@@ -164,7 +164,7 @@ def create_project(body: ProjectIn, idempotency_key: Optional[str] = Header(None
         previous = idem_get(db, "NEW_PROJECT", actor.id, "CREATE_PROJECT", key)
         if previous: return previous
         stamp, project_id = now(), uid("prj")
-        db.execute("INSERT INTO projects VALUES (?,?,?,?,?,?,?,?,?,?,?)", (project_id, "local", body.name, body.objective,
+        db.execute("INSERT INTO projects (id,tenant_id,name,objective,description,state,context_revision,next_requirement_number,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (project_id, "local", body.name, body.objective,
             body.description, "ACTIVE", 0, 1, actor.id, stamp, stamp))
         db.execute("INSERT INTO project_memberships VALUES (?,?,?)", (project_id, actor.id, "PROJECT_OWNER"))
         result = {"id": project_id, "name": body.name, "objective": body.objective, "description": body.description,
@@ -523,7 +523,7 @@ def project_truth(project_id: str, actor: Actor = Depends(current_actor)):
     if counts.get("NEEDS_REVIEW", 0): attention.append({"type":"CANDIDATE_REVIEW", "message": f"{counts['NEEDS_REVIEW']} candidate(s) need review.", "severity":"MEDIUM"})
     if readiness["ready"] and not latest_baseline: attention.append({"type":"GATE_1", "message":"Requirement baseline is ready for human freeze.", "severity":"HIGH"})
     elif readiness["blocking_items"]: attention.append({"type":"BASELINE_BLOCKED", "message":", ".join(readiness["blocking_items"]), "severity":"HIGH"})
-    return {
+    truth = {
         "project": {"id": project_id, "name": project["name"], "objective": project["objective"], "state": project["state"]},
         "context": {"status": "READY" if context_count else "NO_CONTEXT", "source_count": context_count, "revision": project["context_revision"]},
         "ai": {"latest_run_status": latest_run["status"] if latest_run else "NOT_RUN", "failure_code": latest_run["failure_code"] if latest_run else None,
@@ -536,6 +536,13 @@ def project_truth(project_id: str, actor: Actor = Depends(current_actor)):
         "blocking_items": readiness["blocking_items"], "attention": attention,
         "next_recommended_phase": "PHASE_2_DELIVERY_DESIGN_VERTICAL_SLICE" if latest_baseline else None,
     }
+    from .phase2 import phase2_truth_projection
+    phase2 = phase2_truth_projection(project_id)
+    truth.update({key:value for key,value in phase2.items() if key not in {"phase2_attention", "next_recommended_phase"}})
+    truth["attention"].extend(phase2["phase2_attention"])
+    if phase2["next_recommended_phase"]:
+        truth["next_recommended_phase"] = phase2["next_recommended_phase"]
+    return truth
 
 
 @app.get("/api/projects/{project_id}/audit")
@@ -544,3 +551,7 @@ def list_audit(project_id: str, actor: Actor = Depends(current_actor)):
     with connect() as db:
         rows = db.execute("SELECT * FROM audit_events WHERE project_id=? ORDER BY created_at DESC LIMIT 200", (project_id,)).fetchall()
     return [unpack(x) for x in rows]
+
+
+from .phase2 import router as phase2_router
+app.include_router(phase2_router)
