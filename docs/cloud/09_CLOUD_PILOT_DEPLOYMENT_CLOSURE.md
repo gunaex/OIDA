@@ -1,62 +1,56 @@
 # Cloud Pilot Deployment Closure
 
-Date: 2026-08-30  
-Phase: 4.5C  
-Source: `48b4678d67d5a511d2a44fd1e9b78b2ae7af8965` / `v2.0-phase4.5`
+Date: 2026-08-30
+Phase: 4.5D
 
 ## Topology
 
-- Public UI/API: Cloudflare Worker and static assets at `https://oida-pilot-web.gunaex.workers.dev`.
-- Backend origin: Fly application `oida-2-pilot`, region `sin`, at `https://oida-2-pilot.fly.dev`.
-- Database: Fly Managed Postgres cluster `oida-2-pilot-pg`, region `sin`, database `oida_pilot`.
-- Runtime database identity: dedicated schema-admin user. Credentials exposed by CLI/test output during provisioning were treated as compromised and revoked; the surviving credential is Fly-secret-only.
+- Public UI/API: Cloudflare Worker/static assets at `https://oida-pilot-web.gunaex.workers.dev`.
+- Backend: Fly application `oida-2-pilot` in `sin`, with separate `app` and `worker` process groups.
+- Database: Fly Managed PostgreSQL cluster `oida-2-pilot-pg`, database `oida_pilot`.
+- AI: DeepSeek Responses API, strict JSON Schema, no Chat Completions fallback.
+- Secrets: runtime-only configuration. Revoked credentials are not reused; no real secret is stored in source, frontend assets, or reports.
 
-The historical OIDA 1.x tree remained read-only. No application code was copied, ported, or migrated from it.
+## Deployment evidence
 
-## Evidence
+- Fly API health check: PASS; `/ready` reports database ready and DeepSeek configured.
+- Fly worker consumption: PASS with deployed `QUEUED → RUNNING → COMPLETED` transitions.
+- Cloudflare edge/static UI and same-origin API proxy: PASS over HTTPS.
+- Cloudflare Worker deployment used for P1 acceptance: version `349f1c36-343f-418c-a40d-a2e1f12e97e1`.
+- Managed PostgreSQL schema: 63 public tables and seven immutable/additive migration ledger entries through `007_cloud_p1_async_auth`.
+- Managed PostgreSQL critical suite: 32 passed. Local SQLite suite: 86 passed.
+- Restart persistence: API restart followed by successful login, Project Truth readback, and completed AI job readback.
+- No local dependency: acceptance and post-restart evidence used only the public Worker URL and deployed cloud services.
 
-- Backend `/ready`: `READY`, PostgreSQL `READY`, DeepSeek configured.
-- Migration ledger: six migrations; 62 public tables.
-- Managed PostgreSQL critical tests: 27 pass in 141.94 seconds from an ephemeral private-network runner.
-- Local regression/build: 79 SQLite tests pass; Python compile, JavaScript syntax, Docker build, and Worker build/dry-run pass.
-- Backups: completed full backup plus completed incremental backups.
-- Cloudflare: Worker version `2c41a25f-f8cf-422d-a159-0363848cd4d2`; TLS UI and proxied readiness pass.
-- Auth: remote login pass; cookie Secure/HttpOnly/SameSite=Strict; missing Origin returns 403; malformed input returns safe 422; attempts 9 and 10 return 429.
-- Isolation: a temporary second cloud user received 404 for both read and write against a project with no membership; the user was removed after the test.
-- Persistence: a real project, context, committed requirement, and frozen Gate 1 remained readable from a new session after a Fly machine restart.
-- Independent sessions: both sessions observed the same authoritative project state.
-- No local dependency: all evidence endpoints remained available after remote restart without a local application server or tunnel.
+## Live P1 evidence
 
-## Live AI result
+| Operation | Start response | Start time | Total time | Durable states | Result |
+|---|---:|---:|---:|---|---|
+| Requirements | 202 | 0.42 s | 91.61 s | QUEUED → RUNNING → COMPLETED | SUCCEEDED |
+| Solution | 202 | 0.45 s | 170.60 s | QUEUED → RUNNING → COMPLETED | SUCCEEDED |
+| Delivery | 202 | 0.44 s | 129.23 s | QUEUED → RUNNING → COMPLETED | SUCCEEDED |
+| Execution | 202 | 0.55 s | 92.30 s | QUEUED → RUNNING → COMPLETED | SUCCEEDED |
 
-Provider connectivity and authentication succeeded, and the real configured model was invoked. The accepted-path result is nevertheless FAIL:
+The solution contained three decisions requiring human authority. The pilot operator explicitly retained them while changing their baseline classification to `CAN_DEFER`; Gate 2 then passed without deleting the decisions or bypassing readiness.
 
-- model: `deepseek-v4-pro`
-- telemetry: 720 input tokens, 6,081 output tokens, 6,801 total tokens, 72,382 ms
-- result: `AI_OUTPUT_INVALID`
-- authoritative candidates created: zero
-- public edge behavior: HTTP 524 on a separate long request; the backend later recorded the failed run
-
-This is fail-closed behavior, but it prevents Gate 1 AI acceptance and therefore prevents the required cloud golden flow.
+First-login acceptance passed: forced change detected, project access blocked before change, session version rotated, and old password rejected. Two independent sessions saw the same project, AI status/result, and Project Truth. Originless mutation returned 403, cross-project child-resource access returned 404, and malformed input returned a safe 422.
 
 ## External integrations
 
-- Document Again `/api/health`: HTTP 200; OIDA status `BLOCKED_NOT_CONFIGURED` because API/account/tenant credentials are absent.
-- PM Again `/api/health`: HTTP 200; OIDA status `BLOCKED_NOT_CONFIGURED` because its API token is absent.
-- No external records were fabricated or created.
+- `DOCUMENT_AGAIN_CLOUD=BLOCKED_NOT_CONFIGURED`
+- `PM_AGAIN_CLOUD=BLOCKED_NOT_CONFIGURED`
 
-## Login handoff limitation
+No external records were fabricated. These are explicit integration limitations, not core P1 failures.
 
-The requested login email is configured. The requested temporary password was not installed because it violates OIDA's production minimum length, and OIDA does not yet implement forced password change at first login. A generated strong bootstrap password is retained in macOS Keychain under service `OIDA 2.0 Cloud Pilot` and the requested email account.
+## Historical closure record
 
-## Closure decision
+Phase 4.5C, source `48b4678d67d5a511d2a44fd1e9b78b2ae7af8965` / `v2.0-phase4.5`, correctly recorded a NO-GO: strict application validation failed, a synchronous public request returned 524, and forced password change was missing. That record remains historically valid. Phase 4.5D adds the corrective implementation and new live evidence rather than rewriting the earlier result.
 
-- P0: 0
-- P1: 3 (strict DeepSeek output failure, synchronous edge timeout, first-login password-change gap)
-- P2: 4 (Document credentials, PM credentials, aggregate throttling, Cloudflare Access/custom-domain/operations hardening)
-- Cloud pilot acceptance: FAIL
-- OIDA cloud pilot ready: NO
-- Cloud tag: not created
+## Decision
+
+- P0 open: 0
+- Core P1 open: 0
+- Cloud pilot acceptance: `PASS_WITH_EXTERNAL_INTEGRATION_GAP`
+- OIDA cloud pilot ready: YES
+- Real-project dogfood ready: YES, with Document Again and PM Again limitations
 - Phase 5 started: NO
-
-Real-project dogfood is NO-GO until a live AI run passes the strict contract through a deployment path that supports its runtime, followed by the complete cloud golden flow.

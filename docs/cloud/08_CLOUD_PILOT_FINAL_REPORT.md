@@ -1,27 +1,29 @@
 # Cloud Pilot Final Report
 
-Phase 4.5C provisioned and remotely exercised the hybrid deployment. The transition is preserved as:
+Phase 4.5D closes the three core Cloud Pilot P1 defects on the accepted hybrid architecture:
 
-`STRUCTURAL_CLOUD_READINESS → REAL_RESOURCE_PROVISIONING → REMOTE_DEPLOYMENT_ACCEPTANCE`
+`Cloudflare UI/API edge → Fly API → PostgreSQL durable queue → Fly AI worker → DeepSeek Responses API`
 
-Fly Managed Postgres, the Fly backend, the Cloudflare Worker/static UI, auth/session controls, project isolation, independent-session sharing, backup evidence, migrations, and restart persistence pass. The public URL is `https://oida-pilot-web.gunaex.workers.dev`; the backend origin is `https://oida-2-pilot.fly.dev`.
+The public URL is `https://oida-pilot-web.gunaex.workers.dev`; the backend origin is `https://oida-2-pilot.fly.dev`. Fly Managed PostgreSQL is the authoritative store. The historical OIDA 1.x source remained read-only and no application code was copied or ported from it.
 
-Live DeepSeek did not pass. A real `deepseek-v4-pro` invocation consumed 6,801 tokens and returned after 72,382 ms, but its payload failed the strict schema with `AI_OUTPUT_INVALID`. A public Worker attempt also produced HTTP 524 before the backend recorded the failed run. OIDA correctly created no authoritative candidate.
+DeepSeek uses the Responses transport with strict JSON Schema. The earlier failure was specifically caused by `priority` and `confidence` being typed as unrestricted strings with runtime validators, leaving their enums absent from the generated schema. Converting them to `Literal` closed that mismatch. Strict provider output, Pydantic validation, and exact lineage/reference validation now pass live across requirements, solution, delivery, materialization, QA scope, and acceptance package schemas.
 
-Document Again and PM Again are online but blocked by missing OIDA-side credentials. The earlier 4.5B report that remote cloud resources were not configured was correct at that time and is superseded, not erased, by this deployment record.
+The cloud Golden Flow passed. All four browser-facing AI operations returned HTTP 202 in under 0.6 seconds, while provider-backed execution lasted as long as 170.60 seconds. A second independent session observed the same durable state/result. After the Fly API restarted, login, Project Truth, and the completed execution job were still readable. This closes the prior Cloudflare 524 path without imposing an artificial provider-duration limit.
 
-`POSTGRESQL_COMPATIBILITY=PASS`
+Forced first-login password change passed against the deployed service, including server-side project denial, session rotation, and old-password rejection. The accepted password is held only in macOS Keychain and is not recorded in the repository or reports.
 
-`CONTAINER_READINESS=PASS`
+The Phase 4.5C NO-GO is preserved as history: live provider transport succeeded but application validation failed, the synchronous edge path returned 524, and forced first-login change was missing. Phase 4.5D supersedes that runtime conclusion with new passing evidence.
 
-`CLOUDFLARE_DEPLOYMENT=PASS`
+Document Again and PM Again remain blocked solely because live credentials are not configured. Direct Project Context, Internal Execution Target, and Internal Validation remain available for dogfood.
 
-`REMOTE_MULTI_SESSION_ACCEPTANCE=PASS`
+```text
+POSTGRESQL_COMPATIBILITY=PASS
+CONTAINER_READINESS=PASS
+CLOUDFLARE_DEPLOYMENT=PASS
+REMOTE_MULTI_SESSION_ACCEPTANCE=PASS
+DEEPSEEK_CLOUD=PASS
+CLOUD_GOLDEN_FLOW=PASS
+CLOUD_PILOT_REMOTE_READY=YES
+```
 
-`DEEPSEEK_CLOUD=FAIL`
-
-`CLOUD_GOLDEN_FLOW=FAIL`
-
-`CLOUD_PILOT_REMOTE_READY=NO`
-
-No `v2.0-cloud-pilot` tag is permitted until live AI passes through the public deployment path and the full golden flow completes. Phase 5 has not started.
+Phase 5 has not started.

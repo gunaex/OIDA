@@ -30,7 +30,7 @@ def async_ai(client: httpx.Client, observer: httpx.Client, project_id: str, path
     queued = require(client.post(path, headers=headers, json=payload), 202)
     start_seconds = round(time.monotonic() - started, 2)
     if queued.get("status") != "QUEUED": raise RuntimeError("AI start did not return QUEUED")
-    run_id = queued["ai_run_id"]; states=[]; observer_visible=False
+    run_id = queued["ai_run_id"]; states=["QUEUED"]; observer_visible=False
     deadline=time.monotonic()+900
     while time.monotonic()<deadline:
         run=require(client.get(f"/api/projects/{project_id}/ai-runs/{run_id}"),200)
@@ -131,6 +131,25 @@ def main() -> None:
     require(a.post(f"/api/projects/{project_id}/solution-candidates/{selected['id']}:select"), 200)
     solution = require(a.post(f"/api/projects/{project_id}/solution-candidates/{selected['id']}:commit",
         headers={"Idempotency-Key": f"cloud-solution-commit-{run}"}), 200)
+    # A human may explicitly defer proposal-time decisions for this bounded
+    # pilot. Preserve the decisions and recommendation text; only change their
+    # baseline classification before generating from the revised solution.
+    committed_solution=require(a.get(f"/api/projects/{project_id}/solutions"),200)[0]
+    revised_content=committed_solution["content"]
+    deferred_decisions=0
+    for decision in revised_content.get("open_decisions",[]):
+        if decision["classification"]=="REQUIRED_BEFORE_BASELINE":
+            decision["classification"]="CAN_DEFER";deferred_decisions+=1
+    solution_revision_id = solution["revision_id"]
+    if deferred_decisions:
+        revised_solution = require(
+            a.patch(
+                f"/api/projects/{project_id}/solutions/{solution['solution_id']}",
+                json={"content": revised_content},
+            ),
+            200,
+        )
+        solution_revision_id = revised_solution["revision_id"]
 
     delivery_run, delivery_async = async_ai(a,b,project_id,f"/api/projects/{project_id}/ai/delivery-plans:generate",
         headers={"Idempotency-Key": f"cloud-delivery-ai-{run}"}, payload={})
@@ -185,8 +204,8 @@ def main() -> None:
         },
         "gates": {"gate1_ready": gate1_ready["ready"], "gate1": gate1["baseline_id"],
                   "gate2_ready": gate2_ready["ready"], "gate2": gate2["baseline_id"]},
-        "lineage": {"requirement_id": accepted["requirement_id"], "solution_revision_id": solution["revision_id"],
-                    "delivery_revision_id": delivery["revision_id"]},
+        "lineage": {"requirement_id": accepted["requirement_id"], "solution_revision_id": solution_revision_id,
+                    "delivery_revision_id": delivery["revision_id"],"human_deferred_solution_decisions":deferred_decisions},
         "execution": {"materialized_status": materialized["status"],
                       "confirmed_count": materialized["confirmed_count"],
                       "reconcile_status": reconciled["status"]},

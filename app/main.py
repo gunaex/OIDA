@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="OIDA 2.0", version="2.0-phase4.5B", lifespan=lifespan)
+app = FastAPI(title="OIDA 2.0", version="2.0-phase4.5D", lifespan=lifespan)
 if settings.allowed_origins:
     app.add_middleware(CORSMiddleware, allow_origins=list(settings.allowed_origins),
                        allow_credentials=True, allow_methods=["GET","POST","PATCH","PUT","DELETE"],
@@ -181,7 +181,7 @@ def _health_payload(check_database=False):
             database = "READY"
         except Exception: database = "ERROR"
     return {"status": "READY" if database != "ERROR" else "NOT_READY", "version": settings.build_version,
-            "phase": "4.5B", "database": database,
+            "phase": "4.5D", "database": database,
             "ai_provider": settings.ai_provider, "ai_configured": bool(settings.deepseek_api_key or settings.openai_api_key)}
 
 @app.get("/healthz")
