@@ -16,7 +16,7 @@ Phase: 4.5D
 - Fly API health check: PASS; `/ready` reports database ready and DeepSeek configured.
 - Fly worker consumption: PASS with deployed `QUEUED → RUNNING → COMPLETED` transitions.
 - Cloudflare edge/static UI and same-origin API proxy: PASS over HTTPS.
-- Cloudflare Worker deployment used for P1 acceptance: version `349f1c36-343f-418c-a40d-a2e1f12e97e1`.
+- Cloudflare Worker deployment used for the full P1 golden run: version `349f1c36-343f-418c-a40d-a2e1f12e97e1`; final closure redeploy: version `9dfab83b-082f-4dac-994d-cea181893d5a`.
 - Managed PostgreSQL schema: 63 public tables and seven immutable/additive migration ledger entries through `007_cloud_p1_async_auth`.
 - Managed PostgreSQL critical suite: 32 passed. Local SQLite suite: 86 passed.
 - Restart persistence: API restart followed by successful login, Project Truth readback, and completed AI job readback.
