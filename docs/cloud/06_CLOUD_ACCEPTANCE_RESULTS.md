@@ -2,13 +2,14 @@
 
 Date: 2026-08-30
 
-- SQLite full regression: PASS (79 tests after cloud tests are included).
-- PostgreSQL 16 migrations and critical Gate 1–3/Phase 4.5 suite: PASS (27 tests).
-- Production configuration fail-closed, readiness, Origin/CSRF: PASS.
-- Docker non-root build and `/ready` health with expected build version: PASS.
-- Cloudflare OAuth and Fly CLI authentication: AVAILABLE.
-- Managed OIDA PostgreSQL: `NOT_CONFIGURED`.
-- OIDA backend/frontend hostname: `NOT_CONFIGURED`.
-- Remote HTTPS, persistence restart, multi-device, live cloud AI: `NOT_RUN`.
+- Fly Managed Postgres `oida-2-pilot-pg` in `sin`: PASS. The production database has 62 public tables and all six migrations (`001_phase1` through `006_phase4_5_pilot_integrations`). Full and incremental backups are completed.
+- Managed-PostgreSQL critical Gate 1–3/Phase 4.5 suite: PASS (`27 passed in 141.94s`) from an ephemeral Fly runner in the private network.
+- SQLite full regression: PASS (79 tests). Python compile, JavaScript syntax, Docker build, and Worker build/dry-run also pass.
+- Fly application `oida-2-pilot`: PASS. `/health`, `/ready`, Fly health checks, restart recovery, and data persistence pass.
+- Cloudflare Worker and assets: PASS at `https://oida-pilot-web.gunaex.workers.dev`. HTTPS UI and same-origin API proxy pass.
+- Authentication/session controls: PASS. Secure, HttpOnly, SameSite=Strict cookie; Origin denial; safe validation errors; throttling on attempt 9; and a temporary second-user read/write isolation test all pass.
+- Independent-session write/read and post-restart readback: PASS. Physical second-device evidence remains `MANUAL_PENDING`.
+- Live DeepSeek network/provider invocation: reached `deepseek-v4-pro`, but strict acceptance failed with `AI_OUTPUT_INVALID`. No candidate was materialized. The Worker request also returned Cloudflare 524 before the backend completed and recorded its failed run.
+- Document Again and PM Again health endpoints return HTTP 200, but both OIDA adapters are `BLOCKED_NOT_CONFIGURED` because service credentials are absent.
 
-Result: `CLOUD_PILOT_REMOTE_READY=NO`. Deployable foundation is ready; remote acceptance is blocked by unprovisioned resources/configuration.
+Result: `CLOUD_PILOT_ACCEPTANCE=FAIL`. Cloud infrastructure and non-AI flows are operational, but live AI and the required remote cloud golden flow are not accepted.

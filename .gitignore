@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 .pytest_cache/
+.wrangler/
 __pycache__/
 *.py[cod]
 data/
