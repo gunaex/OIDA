@@ -13,10 +13,10 @@ Phase: 4.5D
 
 ## Remaining external/operational limitations
 
-- Document Again live access is `BLOCKED_NOT_CONFIGURED` because API/account/tenant credentials are absent.
-- PM Again live access is `BLOCKED_NOT_CONFIGURED` because its API token is absent.
+- Document Again reachability passes, but live OIDA access is `BLOCKED_UNSAFE_IDENTITY_PROVISIONING`. An authenticated administrator-controlled path to provision a dedicated OIDA service identity with least-privilege read scope is unavailable. The unauthenticated privileged provisioning route was deliberately not used. Direct Project Context/paste or upload is the temporary pilot path; Document provenance and stale-document monitoring are unavailable through that fallback.
+- PM Again live access is closed for pilot use. A dedicated backend service user authenticates through the normal PM API, the `true-cloud-migration` binding is `READY`, exactly two bounded acceptance tasks passed create/readback/idempotency/status/reconciliation, and project isolation returned 404. PM Again has no native milestone or dependency fields, so OIDA does not claim those capabilities.
 - Login throttling is process-local; aggregate edge rate limiting is needed before horizontally scaling the backend.
 - Cloudflare Access, a custom domain, production alerting, and an observed restore drill remain operational hardening work.
 - Physical remote-device testing is `MANUAL_PENDING`; two independent cloud HTTP sessions passed shared-state and AI visibility checks.
 
-The former live-AI/schema, HTTP 524, and first-login gaps remain documented in the Phase 4.5C history, but are no longer open defects.
+The former live-AI/schema, HTTP 524, first-login, and PM-not-configured gaps remain documented in their historical reports, but are no longer open defects. Document Again identity provisioning remains the only external integration blocker for real-project dogfood.

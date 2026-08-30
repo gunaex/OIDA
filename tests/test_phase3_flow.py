@@ -291,6 +291,23 @@ def test_materialization_ai_failure_is_recorded_without_execution_corruption(cli
     )
     assert manual.status_code == 201 and manual.json()["origin"] == "HUMAN"
     assert client.get(f"/api/projects/{project['id']}/execution/materialization-plans").json()[0]["items"] == []
+    with connect() as db:
+        source = db.execute(
+            "SELECT i.id FROM delivery_plan_revision_items i "
+            "JOIN delivery_baselines b ON b.delivery_plan_revision_id=i.plan_revision_id "
+            "WHERE b.project_id=? ORDER BY i.id LIMIT 1", (project["id"],),
+        ).fetchone()
+    added = client.post(
+        f"/api/projects/{project['id']}/execution/materialization-plans/{manual.json()['plan_id']}/items",
+        json={
+            "source_delivery_item_id": source["id"],
+            "execution_title": "Manual recovery mapping",
+            "execution_description": "Map one frozen delivery item after advisory AI was unavailable.",
+            "owner_role": "Delivery Lead",
+            "acceptance_hint": "The mapping is revisioned and ready for human authorization.",
+        },
+    )
+    assert added.status_code == 201 and added.json()["current_revision"] == 2
 
 
 def test_ai_actor_cannot_authorize_execution(client, owner, project):

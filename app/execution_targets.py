@@ -148,20 +148,33 @@ class ManualExternalAdapter:
 
 
 class PmAgainExecutionAdapter:
-    """Authorized human-token adapter to PM Again's normal project/task API."""
+    """Authorized service-user adapter to PM Again's normal project/task API."""
     target_type = "PM_AGAIN"
     capabilities = CAPABILITIES[target_type]
 
     def __init__(self):
-        if not settings.pm_again_url or not settings.pm_again_api_key:
-            raise TargetUnavailable("PM Again URL and API token are required")
+        if not settings.pm_again_configured:
+            raise TargetUnavailable("PM Again URL and service credential are required")
         self.base = settings.pm_again_url.rstrip("/")
-        self.headers = {"Authorization": f"Bearer {settings.pm_again_api_key}"}
+        headers = {"Authorization": f"Bearer {settings.pm_again_api_key}"} if settings.pm_again_api_key else {}
+        self.client = httpx.Client(base_url=self.base, headers=headers,
+                                   timeout=settings.integration_timeout_seconds)
+        if not settings.pm_again_api_key:
+            try:
+                response = self.client.post("/api/auth/login", json={
+                    "email": settings.pm_again_email,
+                    "password": settings.pm_again_password,
+                })
+            except httpx.HTTPError as exc:
+                raise TargetUnavailable("PM Again service account login was unavailable") from exc
+            if response.status_code != 200:
+                raise TargetUnavailable("PM Again service account authentication failed")
+            if response.json().get("must_change_password"):
+                raise TargetUnavailable("PM Again service account requires a password change")
 
     def _request(self, method: str, path: str, json_body=None):
         try:
-            response = httpx.request(method, f"{self.base}{path}", headers=self.headers,
-                                     json=json_body, timeout=settings.integration_timeout_seconds)
+            response = self.client.request(method, path, json=json_body)
         except httpx.TimeoutException as exc:
             raise TargetTimeout("PM Again timed out; reconciliation is required") from exc
         if response.status_code == 404: return None
@@ -184,7 +197,9 @@ class PmAgainExecutionAdapter:
     def _item(x) -> TargetItem:
         status = {"Todo":"NOT_STARTED", "InProgress":"IN_PROGRESS", "Blocked":"BLOCKED",
                   "Done":"COMPLETED", "Cancelled":"CANCELLED"}.get(x.get("status"), "NOT_STARTED")
-        return TargetItem(str(x["id"]), x.get("title", ""), x.get("description") or x.get("desc") or "",
+        description = x.get("description") or x.get("desc") or ""
+        description = description.split("\n\nOIDA-IDEMPOTENCY: ", 1)[0]
+        return TargetItem(str(x["id"]), x.get("title", ""), description,
                           x.get("owner") or x.get("owner_role"),
                           {"High":"HIGH", "Med":"MEDIUM", "Low":"LOW"}.get(x.get("priority"), x.get("priority", "MEDIUM")),
                           None, [], status, x.get("url"))
@@ -193,10 +208,12 @@ class PmAgainExecutionAdapter:
         binding = self._binding(db, request.project_id, request.binding_id)
         # Stable OIDA key lets a retry recover an ambiguous create without duplication.
         stable_key = request.idempotency_key
-        for item in self.list_project_work(db, request.project_id, request.binding_id):
-            if stable_key in item.description: return item
+        for raw in self._list_project_work(binding):
+            description = raw.get("description") or raw.get("desc") or ""
+            if f"OIDA-IDEMPOTENCY: {stable_key}" in description:
+                return self._item(raw)
         body = {"title": request.title,
-                "desc": f"{request.description}\n\nOIDA-IDEMPOTENCY: {stable_key}",
+                "description": f"{request.description}\n\nOIDA-IDEMPOTENCY: {stable_key}",
                 "owner": request.owner_role,
                 "priority": {"HIGH":"High", "MEDIUM":"Med", "LOW":"Low"}.get(request.priority, "Med"),
                 "status": "Todo", "phase": request.milestone_ref}
@@ -210,7 +227,6 @@ class PmAgainExecutionAdapter:
     def update_work_item(self, db, project_id: str, binding_id: Optional[str], external_id: str, changes: dict) -> TargetItem:
         binding = self._binding(db, project_id, binding_id)
         body = dict(changes)
-        if "description" in body: body["desc"] = body.pop("description")
         if "owner_role" in body: body["owner"] = body.pop("owner_role")
         if "priority" in body: body["priority"] = {"HIGH":"High", "MEDIUM":"Med", "LOW":"Low"}.get(body["priority"], body["priority"])
         if "status" in body: body["status"] = {"NOT_STARTED":"Todo", "IN_PROGRESS":"InProgress", "BLOCKED":"Blocked", "COMPLETED":"Done", "CANCELLED":"Cancelled"}.get(body["status"], body["status"])
@@ -220,8 +236,10 @@ class PmAgainExecutionAdapter:
 
     def list_project_work(self, db, project_id: str, binding_id: Optional[str]) -> list[TargetItem]:
         binding = self._binding(db, project_id, binding_id)
-        value = self._request("GET", f"/api/{binding['external_project_id']}/tasks") or []
-        return [self._item(x) for x in value]
+        return [self._item(x) for x in self._list_project_work(binding)]
+
+    def _list_project_work(self, binding) -> list[dict]:
+        return self._request("GET", f"/api/{binding['external_project_id']}/tasks") or []
 
 
 class DeterministicExternalAdapter:

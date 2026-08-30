@@ -161,7 +161,11 @@ def current_plan_content(db, plan_id: str) -> dict:
 
 def snapshot_plan(db, plan_row, editor: str, actor_type: str, summary: Optional[str] = None) -> int:
     previous = current_plan_content(db, plan_row["id"])
-    revision = plan_row["current_revision"] if not previous.get("items") else plan_row["current_revision"] + 1
+    latest = db.execute(
+        "SELECT MAX(revision) AS revision FROM materialization_plan_revisions WHERE plan_id=?",
+        (plan_row["id"],),
+    ).fetchone()
+    revision = (latest["revision"] or 0) + 1
     content = {"plan_summary":summary or previous.get("plan_summary") or "Execution materialization plan.",
         "routing_warnings":json.loads(plan_row["routing_warnings_json"]),
         "unresolved_items":json.loads(plan_row["unresolved_items_json"]),

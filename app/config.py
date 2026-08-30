@@ -24,6 +24,8 @@ class Settings:
     document_again_tenant_id: str = os.getenv("DOCUMENT_AGAIN_TENANT_ID", "")
     pm_again_url: str = os.getenv("PM_AGAIN_URL", "")
     pm_again_api_key: str = os.getenv("PM_AGAIN_API_KEY", "")
+    pm_again_email: str = os.getenv("PM_AGAIN_EMAIL", "")
+    pm_again_password: str = os.getenv("PM_AGAIN_PASSWORD", "")
     integration_timeout_seconds: float = float(os.getenv("INTEGRATION_TIMEOUT_SECONDS", "15"))
     document_freshness_seconds: int = int(os.getenv("DOCUMENT_FRESHNESS_SECONDS", "900"))
     allowed_origins: tuple[str, ...] = tuple(x.strip() for x in os.getenv("OIDA_ALLOWED_ORIGINS", "").split(",") if x.strip())
@@ -41,6 +43,12 @@ class Settings:
     @property
     def production(self) -> bool:
         return self.environment.lower() in {"production", "pilot"}
+
+    @property
+    def pm_again_configured(self) -> bool:
+        return bool(self.pm_again_url and (
+            self.pm_again_api_key or (self.pm_again_email and self.pm_again_password)
+        ))
 
     def validate_runtime(self) -> list[str]:
         failures = []

@@ -45,7 +45,7 @@ def integration_readiness(project_id: str, actor: Actor = Depends(current_actor)
         pm = db.execute("SELECT status,last_verified_at FROM execution_bindings WHERE project_id=? AND target_type='PM_AGAIN'", (project_id,)).fetchone()
     return {
         "document_again": dict(document) if document else {"status": "UNBOUND", "live_configuration": "CONFIGURED" if settings.document_again_url and settings.document_again_api_key else "BLOCKED_NOT_CONFIGURED"},
-        "pm_again": dict(pm) if pm else {"status": "UNBOUND", "live_configuration": "CONFIGURED" if settings.pm_again_url and settings.pm_again_api_key else "BLOCKED_NOT_CONFIGURED"},
+        "pm_again": dict(pm) if pm else {"status": "UNBOUND", "live_configuration": "CONFIGURED" if settings.pm_again_configured else "BLOCKED_NOT_CONFIGURED"},
     }
 
 
