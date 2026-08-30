@@ -34,9 +34,10 @@ def test_production_origin_guard(client, monkeypatch):
         production=True, allowed_origins=("https://oida.example.com",),
         login_attempts_per_minute=8, cookie_secure=True,
     ))
-    blocked = client.post("/api/auth/login", json={"email":"owner@example.com", "password":"change-me"})
+    from tests.conftest import owner_password
+    blocked = client.post("/api/auth/login", json={"email":"owner@example.com", "password":owner_password()})
     allowed = client.post("/api/auth/login", headers={"Origin":"https://oida.example.com"},
-                          json={"email":"owner@example.com", "password":"change-me"})
+                          json={"email":"owner@example.com", "password":owner_password()})
     assert blocked.status_code == 403
     assert allowed.status_code == 200
 

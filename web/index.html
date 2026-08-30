@@ -12,6 +12,14 @@
       <form id="login-form"><label>Email<input name="email" type="email" required></label>
         <label>Password<input name="password" type="password" required></label><button>Sign in</button></form>
     </section>
+    <section id="password-change" class="narrow panel" hidden>
+      <p class="eyebrow">Account security</p><h1>Change your temporary password</h1>
+      <p>Workspace access remains locked until this first-login step is complete.</p>
+      <form id="password-form"><label>Current password<input name="current_password" type="password" required></label>
+        <label>New password<input name="new_password" type="password" minlength="14" required></label>
+        <label>Confirm new password<input name="confirm_password" type="password" minlength="14" required></label>
+        <button>Change password</button></form>
+    </section>
     <section id="projects" hidden>
       <div class="title-row"><div><p class="eyebrow">Projects</p><h1>What needs to move forward?</h1></div><button id="new-project">Create project</button></div>
       <div id="project-list" class="grid"></div>

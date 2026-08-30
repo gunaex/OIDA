@@ -1,6 +1,7 @@
 from app.db import connect, transaction
 
 from tests.test_phase2_flow import establish_gate1, generate_and_commit_solution
+from tests.conftest import complete_ai
 
 
 def establish_gate2(client, project, suffix="p3"):
@@ -11,7 +12,7 @@ def establish_gate2(client, project, suffix="p3"):
         headers={"Idempotency-Key": f"{suffix}-plan-generate"},
         json={},
     )
-    assert generated.status_code == 200 and generated.json()["status"] == "SUCCEEDED", generated.text
+    generated_result=complete_ai(client,project["id"],generated);assert generated_result["status"]=="SUCCEEDED"
     candidate = client.get(f"/api/projects/{project['id']}/delivery-plan-candidates").json()[0]
     committed = client.post(
         f"/api/projects/{project['id']}/delivery-plan-candidates/{candidate['id']}:commit",
@@ -32,8 +33,8 @@ def generate_plan(client, project, suffix="p3"):
         headers={"Idempotency-Key": f"{suffix}-materialization-plan"},
         json={"instruction": "Create an exact, conservative execution mapping."},
     )
-    assert response.status_code == 200 and response.json()["status"] == "SUCCEEDED", response.text
-    return response.json(), client.get(f"/api/projects/{project['id']}/execution/materialization-plans").json()[0]
+    result=complete_ai(client,project["id"],response);assert result["status"]=="SUCCEEDED"
+    return result, client.get(f"/api/projects/{project['id']}/execution/materialization-plans").json()[0]
 
 
 def test_gate2_and_human_authorization_are_hard_boundaries(client, owner, project):
@@ -279,8 +280,8 @@ def test_materialization_ai_failure_is_recorded_without_execution_corruption(cli
         headers={"Idempotency-Key": "p3-ai-failure-generate"},
         json={},
     )
-    assert response.status_code == 200
-    assert response.json()["status"] == "FAILED" and response.json()["failure_code"] == "AI_UNAVAILABLE"
+    result=complete_ai(client,project["id"],response)
+    assert result["status"] == "FAILED" and result["failure_code"] == "AI_UNAVAILABLE"
     assert client.get(f"/api/projects/{project['id']}/execution/materialization-plans").json() == []
     assert client.get(f"/api/projects/{project['id']}/execution/items").json() == []
     manual = client.post(

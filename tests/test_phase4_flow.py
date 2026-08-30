@@ -4,6 +4,7 @@ from app.auth import Actor, current_actor, hash_password
 from app.db import now, transaction
 from app.main import app
 from tests.test_phase3_flow import establish_gate2, generate_plan
+from tests.conftest import complete_ai
 
 
 def establish_execution_truth(client, project, suffix="p4"):
@@ -32,9 +33,9 @@ def generate_qa(client, project, suffix="p4"):
         headers={"Idempotency-Key":f"{suffix}-qa-generate"},
         json={"instruction":"Generate concrete validation with exact frozen coverage."},
     )
-    assert generated.status_code == 200 and generated.json()["status"] == "SUCCEEDED", generated.text
+    result=complete_ai(client,project["id"],generated);assert result["status"]=="SUCCEEDED"
     scope = client.get(f"/api/projects/{project['id']}/qa-scopes").json()[0]
-    return generated.json(), scope
+    return result, scope
 
 
 def test_phase4_requires_execution_truth_and_ai_candidate_is_not_authoritative(client, owner, project):
@@ -143,16 +144,16 @@ def test_phase4_closed_loop_controlled_fail_retest_evidence_package_and_gate3(cl
         f"/api/projects/{project['id']}/acceptance-packages:generate",
         headers={"Idempotency-Key":"p4-golden-package"},json={},
     )
-    assert package.status_code == 200 and package.json()["status"] == "SUCCEEDED", package.text
+    package_result=complete_ai(client,project["id"],package);assert package_result["status"]=="SUCCEEDED"
     ready = client.get(f"/api/projects/{project['id']}/acceptance/readiness").json()
     assert ready["ready"] is True and ready["blocking_items"] == [], ready
     final_headers={"Idempotency-Key":"p4-golden-final"}
     accepted = client.post(f"/api/projects/{project['id']}/final-acceptance",headers=final_headers,json={
-        "acceptance_package_id":package.json()["package_id"],
+        "acceptance_package_id":package_result["package_id"],
         "acceptance_comment":"I reviewed the exact baselines, immutable result history, valid evidence and deterministic readiness.",
     })
     accepted_retry = client.post(f"/api/projects/{project['id']}/final-acceptance",headers=final_headers,json={
-        "acceptance_package_id":package.json()["package_id"],
+        "acceptance_package_id":package_result["package_id"],
         "acceptance_comment":"I reviewed the exact baselines, immutable result history, valid evidence and deterministic readiness.",
     })
     assert accepted.status_code == 200 and accepted.json()["status"] == "ACCEPTED", accepted.text
@@ -196,7 +197,7 @@ def test_ai_and_project_member_cannot_perform_gate3_authority(client, owner, pro
 
     member_id=str(uuid.uuid4());email=f"p4-member-{uuid.uuid4()}@example.com"
     with transaction() as db:
-        db.execute("INSERT INTO users VALUES (?,?,?,?,?,?)",(member_id,email,email,hash_password("password"),"HUMAN",now()))
+        db.execute("INSERT INTO users (id,email,display_name,password_hash,actor_type,created_at) VALUES (?,?,?,?,?,?)",(member_id,email,email,hash_password("password"),"HUMAN",now()))
         db.execute("INSERT INTO project_memberships VALUES (?,?,?)",(project["id"],member_id,"PROJECT_MEMBER"))
     from fastapi.testclient import TestClient
     with TestClient(app) as member:

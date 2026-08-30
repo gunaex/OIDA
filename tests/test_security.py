@@ -10,7 +10,7 @@ from tests.conftest import create_project
 def add_user(email):
     user_id = str(uuid.uuid4())
     with transaction() as db:
-        db.execute("INSERT INTO users VALUES (?,?,?,?,?,?)", (user_id, email, email, hash_password("password"), "HUMAN", now()))
+        db.execute("INSERT INTO users (id,email,display_name,password_hash,actor_type,created_at) VALUES (?,?,?,?,?,?)", (user_id, email, email, hash_password("password"), "HUMAN", now()))
     return user_id
 
 

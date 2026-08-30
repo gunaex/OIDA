@@ -29,6 +29,7 @@ class Settings:
     allowed_origins: tuple[str, ...] = tuple(x.strip() for x in os.getenv("OIDA_ALLOWED_ORIGINS", "").split(",") if x.strip())
     build_version: str = os.getenv("OIDA_BUILD_VERSION", "development")
     login_attempts_per_minute: int = int(os.getenv("OIDA_LOGIN_ATTEMPTS_PER_MINUTE", "8"))
+    password_min_length: int = int(os.getenv("OIDA_PASSWORD_MIN_LENGTH", "14"))
 
     @property
     def database_path(self) -> str:

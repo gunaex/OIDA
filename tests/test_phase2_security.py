@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from app.auth import Actor, current_actor, hash_password
 from app.db import now, transaction
 from app.main import app
-from tests.conftest import create_project
+from tests.conftest import complete_ai, create_project
 from tests.test_phase2_flow import establish_gate1, generate_and_commit_solution
 
 
@@ -14,7 +14,7 @@ def test_phase2_cross_project_reads_and_writes_fail_closed(client, owner, projec
     generate_and_commit_solution(client, project, "p2-security")
     user_id, email = str(uuid.uuid4()), f"p2-other-{uuid.uuid4()}@example.com"
     with transaction() as db:
-        db.execute("INSERT INTO users VALUES (?,?,?,?,?,?)", (user_id,email,email,hash_password("password"),"HUMAN",now()))
+        db.execute("INSERT INTO users (id,email,display_name,password_hash,actor_type,created_at) VALUES (?,?,?,?,?,?)", (user_id,email,email,hash_password("password"),"HUMAN",now()))
     with TestClient(app) as other:
         assert other.post("/api/auth/login",json={"email":email,"password":"password"}).status_code == 200
         for path in ["solution-readiness","solution-candidates","solutions","delivery-plan-candidates","delivery-plans","delivery-baselines/readiness"]:
@@ -25,7 +25,7 @@ def test_phase2_cross_project_reads_and_writes_fail_closed(client, owner, projec
 def test_only_human_owner_can_freeze_gate2(client, owner, project):
     establish_gate1(client, project, "p2-authority")
     generate_and_commit_solution(client, project, "p2-authority")
-    generated=client.post(f"/api/projects/{project['id']}/ai/delivery-plans:generate",headers={"Idempotency-Key":"p2-auth-plan"},json={}).json()
+    generated=complete_ai(client,project["id"],client.post(f"/api/projects/{project['id']}/ai/delivery-plans:generate",headers={"Idempotency-Key":"p2-auth-plan"},json={}))
     assert client.post(f"/api/projects/{project['id']}/delivery-plan-candidates/{generated['candidate_id']}:commit",headers={"Idempotency-Key":"p2-auth-commit"}).status_code == 200
     app.dependency_overrides[current_actor]=lambda:Actor(owner["id"],owner["email"],owner["display_name"],"AI")
     try:

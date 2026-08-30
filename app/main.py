@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .ai import AIError, ContextInput, adapter_for
-from .auth import Actor, bootstrap_user, current_actor, issue_session, require_project, verify_password
+from .auth import Actor, bootstrap_user, current_actor, hash_password, issue_session, require_project, verify_password
 from .config import settings
 from .db import connect, migrate, now, transaction
 from .telemetry import record_ai_telemetry
@@ -96,6 +96,12 @@ app.mount("/assets", StaticFiles(directory="web"), name="assets")
 class LoginIn(BaseModel):
     email: str
     password: str
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_password: str
 
 
 _login_attempts = defaultdict(deque)
@@ -201,11 +207,12 @@ def login(body: LoginIn, request: Request, response: Response):
                   {"email_sha256": __import__("hashlib").sha256(body.email.lower().encode()).hexdigest()})
         raise HTTPException(401, "Invalid credentials")
     _clear_login_failures(address)
-    response.set_cookie("oida_session", issue_session(row["id"]), httponly=True, samesite="strict",
+    response.set_cookie("oida_session", issue_session(row["id"], row["session_version"]), httponly=True, samesite="strict",
                         secure=settings.cookie_secure, max_age=43200)
     with transaction() as db:
         audit(db, None, row["id"], "HUMAN", "LOGIN_SUCCEEDED", "USER", row["id"])
-    return {"id": row["id"], "email": row["email"], "display_name": row["display_name"], "actor_type": "HUMAN"}
+    return {"id": row["id"], "email": row["email"], "display_name": row["display_name"], "actor_type": "HUMAN",
+            "must_change_password": bool(row["must_change_password"])}
 
 
 @app.post("/api/auth/logout")
@@ -218,6 +225,29 @@ def logout(response: Response, actor: Actor = Depends(current_actor)):
 
 @app.get("/api/auth/me")
 def me(actor: Actor = Depends(current_actor)): return actor.__dict__
+
+
+@app.post("/api/auth/password")
+def change_password(body: PasswordChangeIn, response: Response, actor: Actor = Depends(current_actor)):
+    if body.new_password != body.confirm_password:
+        raise HTTPException(422, "New password confirmation does not match")
+    if len(body.new_password) < settings.password_min_length:
+        raise HTTPException(422, f"New password must be at least {settings.password_min_length} characters")
+    if body.new_password == body.current_password:
+        raise HTTPException(422, "New password must differ from current password")
+    with transaction() as db:
+        row = db.execute("SELECT password_hash,session_version,must_change_password FROM users WHERE id=?", (actor.id,)).fetchone()
+        if not row or not verify_password(body.current_password, row["password_hash"]):
+            raise HTTPException(401, "Current password is incorrect")
+        new_version = row["session_version"] + 1
+        db.execute("UPDATE users SET password_hash=?,must_change_password=0,session_version=? WHERE id=?",
+                   (hash_password(body.new_password), new_version, actor.id))
+        audit(db, None, actor.id, "HUMAN", "PASSWORD_CHANGED", "USER", actor.id)
+        if row["must_change_password"]:
+            audit(db, None, actor.id, "HUMAN", "FIRST_LOGIN_PASSWORD_CHANGE_COMPLETED", "USER", actor.id)
+    response.set_cookie("oida_session", issue_session(actor.id, new_version), httponly=True, samesite="strict",
+                        secure=settings.cookie_secure, max_age=43200)
+    return {"status":"PASSWORD_CHANGED", "must_change_password":False}
 
 
 @app.get("/api/projects")
@@ -339,8 +369,7 @@ def generate_use_case(db, project_id: str, actor: Actor, body: GenerateIn, super
                 "provider": adapter.provider, "context_revision": project["context_revision"], "telemetry": telemetry}
 
 
-@app.post("/api/projects/{project_id}/ai/requirements:generate")
-def generate_requirements(project_id: str, body: GenerateIn, idempotency_key: Optional[str] = Header(None), actor: Actor = Depends(current_actor)):
+def generate_requirements_sync(project_id: str, body: GenerateIn, idempotency_key: Optional[str], actor: Actor):
     require_project(actor, project_id)
     key = require_key(idempotency_key)
     with transaction() as db:
@@ -349,6 +378,37 @@ def generate_requirements(project_id: str, body: GenerateIn, idempotency_key: Op
         result = generate_use_case(db, project_id, actor, body)
         idem_put(db, project_id, actor.id, "GENERATE_REQUIREMENTS", key, result)
     return result
+
+
+@app.post("/api/projects/{project_id}/ai/requirements:generate", status_code=202)
+def generate_requirements(project_id: str, body: GenerateIn, idempotency_key: Optional[str] = Header(None), actor: Actor = Depends(current_actor)):
+    from .jobs import enqueue
+    require_project(actor, project_id); key = require_key(idempotency_key)
+    with transaction() as db:
+        previous = idem_get(db, project_id, actor.id, "QUEUE_REQUIREMENTS", key)
+        if previous: return previous
+        result = enqueue(db, project_id, actor, "REQUIREMENTS", body.model_dump())
+        idem_put(db, project_id, actor.id, "QUEUE_REQUIREMENTS", key, result)
+    return result
+
+
+@app.get("/api/projects/{project_id}/ai-runs/{job_id}")
+def get_async_ai_run(project_id: str, job_id: str, actor: Actor = Depends(current_actor)):
+    from .jobs import view
+    require_project(actor, project_id)
+    with connect() as db:
+        row = db.execute("SELECT * FROM async_ai_jobs WHERE id=? AND project_id=?", (job_id, project_id)).fetchone()
+    if not row: raise HTTPException(404, "AI run not found")
+    return view(row)
+
+
+@app.get("/api/projects/{project_id}/async-ai-runs")
+def list_async_ai_runs(project_id: str, actor: Actor = Depends(current_actor)):
+    from .jobs import view
+    require_project(actor, project_id)
+    with connect() as db:
+        rows = db.execute("SELECT * FROM async_ai_jobs WHERE project_id=? ORDER BY created_at DESC", (project_id,)).fetchall()
+    return [view(row) for row in rows]
 
 
 @app.get("/api/projects/{project_id}/ai-runs")
@@ -452,8 +512,7 @@ def reject_candidate(project_id: str, candidate_id: str, body: RejectIn, actor: 
     return {"id": candidate_id, "status": "REJECTED"}
 
 
-@app.post("/api/projects/{project_id}/requirement-candidates/{candidate_id}:regenerate")
-def regenerate_candidate(project_id: str, candidate_id: str, body: GenerateIn, idempotency_key: Optional[str] = Header(None), actor: Actor = Depends(current_actor)):
+def regenerate_candidate_sync(project_id: str, candidate_id: str, body: GenerateIn, idempotency_key: Optional[str], actor: Actor):
     require_project(actor, project_id)
     key = require_key(idempotency_key)
     with transaction() as db:
@@ -466,6 +525,19 @@ def regenerate_candidate(project_id: str, candidate_id: str, body: GenerateIn, i
             db.execute("UPDATE requirement_candidates SET status='SUPERSEDED',updated_at=? WHERE id=? AND project_id=? AND status!='ACCEPTED'", (now(), candidate_id, project_id))
         audit(db, project_id, actor.id, "HUMAN", "CANDIDATE_REGENERATED", "REQUIREMENT_CANDIDATE", candidate_id, result=result["status"])
         idem_put(db, project_id, actor.id, "REGENERATE_CANDIDATE", key, result)
+    return result
+
+
+@app.post("/api/projects/{project_id}/requirement-candidates/{candidate_id}:regenerate",status_code=202)
+def regenerate_candidate(project_id: str,candidate_id: str,body: GenerateIn,idempotency_key: Optional[str]=Header(None),actor: Actor=Depends(current_actor)):
+    from .jobs import enqueue
+    require_project(actor,project_id);key=require_key(idempotency_key)
+    with transaction() as db:
+        row=db.execute("SELECT id FROM requirement_candidates WHERE id=? AND project_id=?",(candidate_id,project_id)).fetchone()
+        if not row:raise HTTPException(404,"Candidate not found")
+        previous=idem_get(db,project_id,actor.id,"QUEUE_REGENERATE_CANDIDATE",key)
+        if previous:return previous
+        result=enqueue(db,project_id,actor,"REQUIREMENTS_REGENERATE",{**body.model_dump(),"candidate_id":candidate_id});idem_put(db,project_id,actor.id,"QUEUE_REGENERATE_CANDIDATE",key,result)
     return result
 
 

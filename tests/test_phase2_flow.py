@@ -1,4 +1,5 @@
 import copy
+from tests.conftest import complete_ai
 
 
 def establish_gate1(client, project, suffix="p2"):
@@ -18,7 +19,8 @@ def establish_gate1(client, project, suffix="p2"):
 def generate_and_commit_solution(client, project, suffix="p2"):
     generated = client.post(f"/api/projects/{project['id']}/ai/solutions:generate",
         headers={"Idempotency-Key":f"{suffix}-solutions"}, json={})
-    assert generated.status_code == 200 and generated.json()["status"] == "SUCCEEDED", generated.text
+    result = complete_ai(client, project["id"], generated)
+    assert result["status"] == "SUCCEEDED"
     candidates = client.get(f"/api/projects/{project['id']}/solution-candidates").json()
     assert 2 <= len(candidates) <= 3
     selected = candidates[0]
@@ -47,8 +49,8 @@ def test_solution_requires_gate1_and_generates_comparable_grounded_options(clien
 
 def test_solution_edit_reject_regenerate_merge_and_commit_idempotency(client, owner, project):
     establish_gate1(client, project, "controls")
-    generated = client.post(f"/api/projects/{project['id']}/ai/solutions:generate",
-        headers={"Idempotency-Key":"controls-gen"}, json={}).json()
+    generated = complete_ai(client,project["id"],client.post(f"/api/projects/{project['id']}/ai/solutions:generate",
+        headers={"Idempotency-Key":"controls-gen"}, json={}))
     candidates = client.get(f"/api/projects/{project['id']}/solution-candidates").json()
     edited = copy.deepcopy(candidates[0]["content"]); edited["summary"] += " Human-reviewed."
     response = client.patch(f"/api/projects/{project['id']}/solution-candidates/{candidates[0]['id']}", json={"content":edited})
@@ -56,7 +58,7 @@ def test_solution_edit_reject_regenerate_merge_and_commit_idempotency(client, ow
     assert client.post(f"/api/projects/{project['id']}/solution-candidates/{candidates[1]['id']}:reject", json={"reason":"Trade-off rejected"}).status_code == 200
     regenerated = client.post(f"/api/projects/{project['id']}/solution-candidates/{candidates[2]['id']}:regenerate",
         headers={"Idempotency-Key":"controls-regen"}, json={"instruction":"Reduce coordination risk"})
-    assert regenerated.status_code == 200 and regenerated.json()["status"] == "SUCCEEDED"
+    regenerated_result=complete_ai(client,project["id"],regenerated);assert regenerated_result["status"]=="SUCCEEDED"
     merged = client.post(f"/api/projects/{project['id']}/solution-candidates:merge",
         headers={"Idempotency-Key":"controls-merge"}, json={"candidate_ids":[candidates[0]["id"],candidates[1]["id"]],"title":"Human composite"})
     assert merged.status_code == 201 and merged.json()["origin"] == "HUMAN_MERGE"
@@ -73,7 +75,7 @@ def test_phase2_full_golden_flow_gate2_exact_membership_and_truth(client, owner,
     _, solution = generate_and_commit_solution(client, project, "golden2")
     generated = client.post(f"/api/projects/{project['id']}/ai/delivery-plans:generate",
         headers={"Idempotency-Key":"golden2-plan-gen"}, json={})
-    assert generated.status_code == 200 and generated.json()["status"] == "SUCCEEDED", generated.text
+    generated_result=complete_ai(client,project["id"],generated);assert generated_result["status"]=="SUCCEEDED"
     candidate = client.get(f"/api/projects/{project['id']}/delivery-plan-candidates").json()[0]
     assert candidate["solution_revision_id"] == solution["revision_id"]
     content = copy.deepcopy(candidate["content"])
@@ -111,8 +113,8 @@ def test_phase2_full_golden_flow_gate2_exact_membership_and_truth(client, owner,
 def test_plan_dependency_validation_and_solution_revision_staleness(client, owner, project):
     establish_gate1(client, project, "stale2")
     candidates, solution = generate_and_commit_solution(client, project, "stale2")
-    generated = client.post(f"/api/projects/{project['id']}/ai/delivery-plans:generate",
-        headers={"Idempotency-Key":"stale2-plan"}, json={}).json()
+    generated = complete_ai(client,project["id"],client.post(f"/api/projects/{project['id']}/ai/delivery-plans:generate",
+        headers={"Idempotency-Key":"stale2-plan"}, json={}))
     candidate = client.get(f"/api/projects/{project['id']}/delivery-plan-candidates").json()[0]
     item_ref = candidate["content"]["items"][0]["ref"]
     self_cycle = client.put(f"/api/projects/{project['id']}/delivery-plan-candidates/{candidate['id']}/dependencies",
@@ -132,8 +134,8 @@ def test_plan_dependency_validation_and_solution_revision_staleness(client, owne
 def test_plan_manual_add_remove_and_unknown_dependency_are_validated(client, owner, project):
     establish_gate1(client, project, "manual-plan")
     generate_and_commit_solution(client, project, "manual-plan")
-    generated = client.post(f"/api/projects/{project['id']}/ai/delivery-plans:generate",
-        headers={"Idempotency-Key":"manual-plan-gen"}, json={}).json()
+    generated = complete_ai(client,project["id"],client.post(f"/api/projects/{project['id']}/ai/delivery-plans:generate",
+        headers={"Idempotency-Key":"manual-plan-gen"}, json={}))
     candidate = client.get(f"/api/projects/{project['id']}/delivery-plan-candidates").json()[0]
     first = candidate["content"]["items"][0]
     manual = copy.deepcopy(first)
@@ -149,8 +151,8 @@ def test_plan_manual_add_remove_and_unknown_dependency_are_validated(client, own
 
 def test_new_requirement_baseline_makes_solution_candidate_stale(client, owner, project):
     establish_gate1(client, project, "rebaseline")
-    result = client.post(f"/api/projects/{project['id']}/ai/solutions:generate",
-        headers={"Idempotency-Key":"rebaseline-solutions"}, json={}).json()
+    result = complete_ai(client,project["id"],client.post(f"/api/projects/{project['id']}/ai/solutions:generate",
+        headers={"Idempotency-Key":"rebaseline-solutions"}, json={}))
     candidate_id = result["candidate_ids"][0]
     extra = client.post(f"/api/projects/{project['id']}/requirements", headers={"Idempotency-Key":"rebaseline-extra"}, json={
         "title":"Responsive access","statement":"The portal shall support responsive access on current mobile browsers.",
@@ -165,8 +167,8 @@ def test_new_requirement_baseline_makes_solution_candidate_stale(client, owner, 
 
 def test_invalid_solution_coverage_is_rejected(client, owner, project):
     establish_gate1(client, project, "bad-coverage")
-    result = client.post(f"/api/projects/{project['id']}/ai/solutions:generate",
-        headers={"Idempotency-Key":"bad-coverage-gen"}, json={}).json()
+    result = complete_ai(client,project["id"],client.post(f"/api/projects/{project['id']}/ai/solutions:generate",
+        headers={"Idempotency-Key":"bad-coverage-gen"}, json={}))
     candidate = client.get(f"/api/projects/{project['id']}/solution-candidates").json()[0]
     content = copy.deepcopy(candidate["content"])
     content["requirement_coverage"] = []
@@ -180,8 +182,8 @@ def test_solution_ai_failure_is_recorded_and_visible(client, owner, project, mon
     monkeypatch.setattr("app.phase2.adapter_for", lambda: DisabledAdapter())
     response = client.post(f"/api/projects/{project['id']}/ai/solutions:generate",
         headers={"Idempotency-Key":"p2-disabled-gen"}, json={})
-    assert response.status_code == 200
-    assert response.json()["status"] == "FAILED" and response.json()["failure_code"] == "AI_UNAVAILABLE"
+    result=complete_ai(client,project["id"],response)
+    assert result["status"] == "FAILED" and result["failure_code"] == "AI_UNAVAILABLE"
     runs = client.get(f"/api/projects/{project['id']}/design-ai-runs").json()
     assert runs[0]["status"] == "FAILED" and runs[0]["run_type"] == "SOLUTION"
     assert runs[0]["telemetry"]["error_class"] == "AI_UNAVAILABLE"

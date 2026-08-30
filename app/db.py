@@ -98,6 +98,11 @@ def transaction():
 
 def migrate() -> None:
     with connect() as db:
+        # API and worker processes may start together during a deployment.
+        # Serialize additive PostgreSQL DDL across processes for the lifetime
+        # of this database session; SQLite startup is already serialized by file locking.
+        if is_postgres():
+            db.execute("SELECT pg_advisory_lock(hashtext('oida_2_schema_migrations'))")
         # Phase 1 creates the migration ledger. Apply every later migration once,
         # in filename order, so accepted migrations remain immutable.
         for path in sorted(Path("migrations").glob("*.sql")):
@@ -112,3 +117,5 @@ def migrate() -> None:
                 db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES (?,?) ON CONFLICT(version) DO NOTHING", (path.stem, now()))
             else:
                 db.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES (?,?)", (path.stem, now()))
+        if is_postgres():
+            db.execute("SELECT pg_advisory_unlock(hashtext('oida_2_schema_migrations'))")

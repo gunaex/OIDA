@@ -1,4 +1,5 @@
 from app.db import connect
+from tests.conftest import complete_ai
 
 
 def add_context(client, project, key="context-1"):
@@ -13,9 +14,9 @@ def add_context(client, project, key="context-1"):
 def generate(client, project, key="generate-1"):
     response = client.post(f"/api/projects/{project['id']}/ai/requirements:generate", headers={"Idempotency-Key":key},
                            json={"instruction":"Generate concise testable requirements."})
-    assert response.status_code == 200, response.text
-    assert response.json()["status"] == "SUCCEEDED"
-    return response.json()
+    result = complete_ai(client, project["id"], response)
+    assert result["status"] == "SUCCEEDED"
+    return result
 
 
 def test_full_golden_flow_and_baseline_immutability(client, owner, project):
@@ -101,7 +102,7 @@ def test_regenerate_preserves_and_supersedes_candidate(client, owner, project):
     old = client.get(f"/api/projects/{project['id']}/requirement-candidates").json()[0]
     response = client.post(f"/api/projects/{project['id']}/requirement-candidates/{old['id']}:regenerate",
         headers={"Idempotency-Key":"regen-action"}, json={"instruction":"Focus on security."})
-    assert response.status_code == 200 and response.json()["status"] == "SUCCEEDED"
+    result=complete_ai(client,project["id"],response);assert result["status"]=="SUCCEEDED"
     candidates = client.get(f"/api/projects/{project['id']}/requirement-candidates").json()
     preserved = next(x for x in candidates if x["id"] == old["id"])
     assert preserved["status"] == "SUPERSEDED"
@@ -114,9 +115,9 @@ def test_ai_unavailable_is_recorded_not_empty_success(client, owner, project, mo
     add_context(client, project, "disabled-context")
     response = client.post(f"/api/projects/{project['id']}/ai/requirements:generate",
         headers={"Idempotency-Key":"disabled-ai"}, json={})
-    assert response.status_code == 200
-    assert response.json()["status"] == "FAILED"
-    assert response.json()["failure_code"] == "AI_UNAVAILABLE"
+    result = complete_ai(client, project["id"], response)
+    assert result["status"] == "FAILED"
+    assert result["failure_code"] == "AI_UNAVAILABLE"
     truth = client.get(f"/api/projects/{project['id']}/truth").json()
     assert truth["ai"]["latest_run_status"] == "FAILED"
     assert any(x["type"] == "AI_FAILURE" for x in truth["attention"])

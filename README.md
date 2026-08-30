@@ -56,6 +56,11 @@ export DEEPSEEK_BASE_URL=https://api.deepseek.com
 
 Provider keys stay server-side. An unknown `AI_PROVIDER` fails explicitly with
 `AI_PROVIDER_INVALID`; it never falls back to the fake or another live provider.
+Live AI starts return HTTP 202 and are consumed by the durable worker process;
+run the worker locally with `python -m app.worker`. The UI polls durable run state,
+so navigation, reloads, and independent authorized sessions do not lose long work.
+Bootstrap identities must change their initial password before any project route
+is available; password changes rotate the server-validated session version.
 
 ```bash
 pytest

@@ -220,9 +220,8 @@ def execution_readiness(project_id: str, actor: Actor = Depends(current_actor)):
             "blocking_items":[] if baseline else ["BLOCKED_NO_DELIVERY_BASELINE"]}
 
 
-@router.post("/materialization-plans:generate")
-def generate_materialization_plan(project_id: str, body: GenerateMaterializationIn,
-                                  idempotency_key: Optional[str]=Header(None), actor: Actor=Depends(current_actor)):
+def generate_materialization_plan_sync(project_id: str, body: GenerateMaterializationIn,
+                                       idempotency_key: Optional[str], actor: Actor):
     require_project(actor,project_id); key=require_key(idempotency_key)
     with transaction() as db:
         previous=idem_get(db,project_id,actor.id,"GENERATE_MATERIALIZATION_PLAN",key)
@@ -262,6 +261,19 @@ def generate_materialization_plan(project_id: str, body: GenerateMaterialization
         result={"ai_run_id":run_id,"plan_id":plan_id,"status":"SUCCEEDED","item_count":len(output.items),"provider":adapter.provider,"model":adapter.model,"delivery_baseline_id":baseline["id"],"telemetry":values}
         audit(db,project_id,f"ai:{run_id}","AI","MATERIALIZATION_PLAN_GENERATED","MATERIALIZATION_PLAN",plan_id,detail={"item_count":len(output.items)})
         idem_put(db,project_id,actor.id,"GENERATE_MATERIALIZATION_PLAN",key,result)
+        return result
+
+
+@router.post("/materialization-plans:generate", status_code=202)
+def generate_materialization_plan(project_id: str, body: GenerateMaterializationIn,
+                                  idempotency_key: Optional[str]=Header(None), actor: Actor=Depends(current_actor)):
+    from .jobs import enqueue
+    require_project(actor,project_id);key=require_key(idempotency_key)
+    with connect() as db: source_packet(db,project_id)
+    with transaction() as db:
+        previous=idem_get(db,project_id,actor.id,"QUEUE_MATERIALIZATION",key)
+        if previous:return previous
+        result=enqueue(db,project_id,actor,"MATERIALIZATION",body.model_dump());idem_put(db,project_id,actor.id,"QUEUE_MATERIALIZATION",key,result)
     return result
 
 

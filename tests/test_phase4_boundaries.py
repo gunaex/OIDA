@@ -1,5 +1,6 @@
 from tests.conftest import create_project
 from tests.test_phase4_flow import establish_execution_truth, generate_qa
+from tests.conftest import complete_ai
 from app.ai import AcceptancePackageOutput, DisabledAdapter, FakeAdapter
 import app.phase4 as phase4
 
@@ -65,7 +66,7 @@ def test_ai_unavailable_does_not_create_scope_and_manual_fallback_remains(client
     establish_execution_truth(client,project,"p4-ai-unavailable")
     monkeypatch.setattr(phase4,"adapter_for",lambda:DisabledAdapter())
     failed=client.post(f"/api/projects/{project['id']}/qa-scopes:generate",headers={"Idempotency-Key":"p4-ai-unavailable-generate"},json={})
-    assert failed.status_code==200 and failed.json()["failure_code"]=="AI_UNAVAILABLE"
+    failed_result=complete_ai(client,project["id"],failed);assert failed_result["failure_code"]=="AI_UNAVAILABLE"
     assert client.get(f"/api/projects/{project['id']}/qa-scopes").json()==[]
     manual=client.post(f"/api/projects/{project['id']}/qa-scopes",headers={"Idempotency-Key":"p4-ai-unavailable-manual"},json={"summary":"Human-prepared fallback scope after a bounded AI provider failure."})
     assert manual.status_code==201 and manual.json()["origin"]=="HUMAN"
@@ -80,7 +81,7 @@ def test_acceptance_ai_cannot_omit_authoritative_failure(client,owner,project,mo
             return AcceptancePackageOutput.model_validate({"executive_summary":"This deliberately unsafe summary attempts to hide the known failure.","requirement_readiness":"Frozen requirement coverage is present.","validation_readiness":"Validation was performed but details are omitted.","evidence_readiness":"Evidence status is represented incompletely.","execution_readiness":"Execution Truth is currently healthy.","critical_failure_validation_item_ids":[],"critical_blockers":[],"missing_evidence_validation_item_ids":[],"residual_risks":[],"acceptance_recommendation":"RECOMMEND_ACCEPT","recommendation_basis":"This unsafe model answer contradicts deterministic application truth and must be rejected.","findings":[]})
     monkeypatch.setattr(phase4,"adapter_for",lambda:OmissionAdapter())
     package=client.post(f"/api/projects/{project['id']}/acceptance-packages:generate",headers={"Idempotency-Key":"p4-ai-omission-package"},json={})
-    assert package.status_code==200 and package.json()["status"]=="FAILED" and package.json()["failure_code"]=="AI_OUTPUT_INVALID"
+    package_result=complete_ai(client,project["id"],package);assert package_result["status"]=="FAILED" and package_result["failure_code"]=="AI_OUTPUT_INVALID"
     assert client.get(f"/api/projects/{project['id']}/acceptance-packages").json()==[]
 
 

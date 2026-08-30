@@ -14,6 +14,12 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
+_owner_password = "change-me"
+
+
+def owner_password():
+    return _owner_password
+
 
 @pytest.fixture
 def client():
@@ -23,9 +29,30 @@ def client():
 
 @pytest.fixture
 def owner(client):
-    response = client.post("/api/auth/login", json={"email": "owner@example.com", "password": "change-me"})
+    global _owner_password
+    response = client.post("/api/auth/login", json={"email": "owner@example.com", "password": _owner_password})
     assert response.status_code == 200
+    if response.json().get("must_change_password"):
+        replacement = "Test-owner-password-2026!"
+        changed = client.post("/api/auth/password", json={"current_password":_owner_password,"new_password":replacement,"confirm_password":replacement})
+        assert changed.status_code == 200, changed.text
+        _owner_password = replacement
     return response.json()
+
+
+def complete_ai(client, project_id, response):
+    from app.jobs import run_one
+    assert response.status_code == 202, response.text
+    queued = response.json()
+    assert queued["status"] == "QUEUED"
+    completed = client.get(f"/api/projects/{project_id}/ai-runs/{queued['ai_run_id']}")
+    if completed.json()["status"] not in {"COMPLETED","FAILED"}:
+        assert run_one("pytest-worker")
+        completed = client.get(f"/api/projects/{project_id}/ai-runs/{queued['ai_run_id']}")
+    assert completed.status_code == 200, completed.text
+    job = completed.json()
+    assert job["status"] in {"COMPLETED", "FAILED"}
+    return job["result"]
 
 
 def create_project(client, suffix=""):

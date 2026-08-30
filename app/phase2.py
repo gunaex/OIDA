@@ -217,9 +217,7 @@ def solution_readiness(project_id: str, actor: Actor = Depends(current_actor)):
             "blocking_items":[] if baseline else ["GATE_1_NOT_FROZEN"]}
 
 
-@router.post("/ai/solutions:generate")
-def generate_solutions(project_id: str, body: GenerateDesignIn, idempotency_key: Optional[str] = Header(None),
-                       actor: Actor = Depends(current_actor)):
+def generate_solutions_sync(project_id: str, body: GenerateDesignIn, idempotency_key: Optional[str], actor: Actor):
     require_project(actor, project_id)
     key = require_key(idempotency_key)
     with transaction() as db:
@@ -227,6 +225,18 @@ def generate_solutions(project_id: str, body: GenerateDesignIn, idempotency_key:
         if previous: return previous
         result = materialize_solution_run(db, project_id, actor, body)
         idem_put(db, project_id, actor.id, "GENERATE_SOLUTIONS", key, result)
+    return result
+
+
+@router.post("/ai/solutions:generate", status_code=202)
+def generate_solutions(project_id: str, body: GenerateDesignIn, idempotency_key: Optional[str] = Header(None), actor: Actor = Depends(current_actor)):
+    from .jobs import enqueue
+    require_project(actor, project_id); key=require_key(idempotency_key)
+    with connect() as db: baseline_input(db, project_id)
+    with transaction() as db:
+        previous=idem_get(db,project_id,actor.id,"QUEUE_SOLUTIONS",key)
+        if previous:return previous
+        result=enqueue(db,project_id,actor,"SOLUTIONS",body.model_dump());idem_put(db,project_id,actor.id,"QUEUE_SOLUTIONS",key,result)
     return result
 
 
@@ -294,9 +304,8 @@ def reject_solution_candidate(project_id: str, candidate_id: str, body: RejectIn
     return {"id":candidate_id, "status":"REJECTED"}
 
 
-@router.post("/solution-candidates/{candidate_id}:regenerate")
-def regenerate_solution_candidate(project_id: str, candidate_id: str, body: GenerateDesignIn,
-                                  idempotency_key: Optional[str] = Header(None), actor: Actor = Depends(current_actor)):
+def regenerate_solution_candidate_sync(project_id: str, candidate_id: str, body: GenerateDesignIn,
+                                       idempotency_key: Optional[str], actor: Actor):
     require_project(actor, project_id)
     key = require_key(idempotency_key)
     with transaction() as db:
@@ -308,6 +317,19 @@ def regenerate_solution_candidate(project_id: str, candidate_id: str, body: Gene
         if result["status"] == "SUCCEEDED" and row["status"] != "COMMITTED":
             db.execute("UPDATE solution_candidates SET status='SUPERSEDED',updated_at=? WHERE id=? AND project_id=?", (now(), candidate_id, project_id))
         idem_put(db, project_id, actor.id, "REGENERATE_SOLUTION", key, result)
+    return result
+
+
+@router.post("/solution-candidates/{candidate_id}:regenerate",status_code=202)
+def regenerate_solution_candidate(project_id:str,candidate_id:str,body:GenerateDesignIn,idempotency_key:Optional[str]=Header(None),actor:Actor=Depends(current_actor)):
+    from .jobs import enqueue
+    require_project(actor,project_id);key=require_key(idempotency_key)
+    with transaction() as db:
+        row=db.execute("SELECT id FROM solution_candidates WHERE id=? AND project_id=?",(candidate_id,project_id)).fetchone()
+        if not row:raise HTTPException(404,"Solution candidate not found")
+        previous=idem_get(db,project_id,actor.id,"QUEUE_REGENERATE_SOLUTION",key)
+        if previous:return previous
+        result=enqueue(db,project_id,actor,"SOLUTIONS_REGENERATE",{**body.model_dump(),"candidate_id":candidate_id});idem_put(db,project_id,actor.id,"QUEUE_REGENERATE_SOLUTION",key,result)
     return result
 
 
@@ -465,13 +487,27 @@ def materialize_plan_run(db, project_id, actor, body, supersedes=None):
         return {"ai_run_id":run_id,"status":"FAILED","failure_code":exc.code,"message":str(exc),"provider":adapter.provider,"telemetry":telemetry}
 
 
-@router.post("/ai/delivery-plans:generate")
-def generate_plan(project_id: str, body: GenerateDesignIn, idempotency_key: Optional[str]=Header(None), actor: Actor=Depends(current_actor)):
+def generate_plan_sync(project_id: str, body: GenerateDesignIn, idempotency_key: Optional[str], actor: Actor):
     require_project(actor,project_id); key=require_key(idempotency_key)
     with transaction() as db:
         previous=idem_get(db,project_id,actor.id,"GENERATE_DELIVERY_PLAN",key)
         if previous:return previous
         result=materialize_plan_run(db,project_id,actor,body); idem_put(db,project_id,actor.id,"GENERATE_DELIVERY_PLAN",key,result)
+    return result
+
+
+@router.post("/ai/delivery-plans:generate", status_code=202)
+def generate_plan(project_id: str, body: GenerateDesignIn, idempotency_key: Optional[str]=Header(None), actor: Actor=Depends(current_actor)):
+    from .jobs import enqueue
+    require_project(actor,project_id);key=require_key(idempotency_key)
+    with connect() as db:
+        solution=current_solution(db,project_id);latest=latest_baseline(db,project_id)
+        if not solution:raise HTTPException(409,"A committed solution is required before delivery-plan generation")
+        if not latest or solution["requirement_baseline_id"]!=latest["id"]:raise HTTPException(409,"Committed solution is stale against the latest requirement baseline")
+    with transaction() as db:
+        previous=idem_get(db,project_id,actor.id,"QUEUE_DELIVERY_PLAN",key)
+        if previous:return previous
+        result=enqueue(db,project_id,actor,"DELIVERY_PLAN",body.model_dump());idem_put(db,project_id,actor.id,"QUEUE_DELIVERY_PLAN",key,result)
     return result
 
 
@@ -552,8 +588,7 @@ def replace_dependencies(project_id: str,candidate_id: str,body: DependenciesIn,
     return {"id":candidate_id,"current_revision":revision,"dependency_count":len(body.dependencies)}
 
 
-@router.post("/delivery-plan-candidates/{candidate_id}:regenerate")
-def regenerate_plan(project_id: str,candidate_id: str,body: GenerateDesignIn,idempotency_key: Optional[str]=Header(None),actor: Actor=Depends(current_actor)):
+def regenerate_plan_sync(project_id: str,candidate_id: str,body: GenerateDesignIn,idempotency_key: Optional[str],actor: Actor):
     require_project(actor,project_id); key=require_key(idempotency_key)
     with transaction() as db:
         previous=idem_get(db,project_id,actor.id,"REGENERATE_DELIVERY_PLAN",key)
@@ -563,6 +598,19 @@ def regenerate_plan(project_id: str,candidate_id: str,body: GenerateDesignIn,ide
         result=materialize_plan_run(db,project_id,actor,body,candidate_id)
         if result["status"]=="SUCCEEDED" and row["status"]!="COMMITTED": db.execute("UPDATE delivery_plan_candidates SET status='SUPERSEDED',updated_at=? WHERE id=?",(now(),candidate_id))
         idem_put(db,project_id,actor.id,"REGENERATE_DELIVERY_PLAN",key,result)
+    return result
+
+
+@router.post("/delivery-plan-candidates/{candidate_id}:regenerate",status_code=202)
+def regenerate_plan(project_id:str,candidate_id:str,body:GenerateDesignIn,idempotency_key:Optional[str]=Header(None),actor:Actor=Depends(current_actor)):
+    from .jobs import enqueue
+    require_project(actor,project_id);key=require_key(idempotency_key)
+    with transaction() as db:
+        row=db.execute("SELECT id FROM delivery_plan_candidates WHERE id=? AND project_id=?",(candidate_id,project_id)).fetchone()
+        if not row:raise HTTPException(404,"Delivery plan candidate not found")
+        previous=idem_get(db,project_id,actor.id,"QUEUE_REGENERATE_DELIVERY_PLAN",key)
+        if previous:return previous
+        result=enqueue(db,project_id,actor,"DELIVERY_PLAN_REGENERATE",{**body.model_dump(),"candidate_id":candidate_id});idem_put(db,project_id,actor.id,"QUEUE_REGENERATE_DELIVERY_PLAN",key,result)
     return result
 
 

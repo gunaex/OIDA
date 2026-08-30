@@ -177,8 +177,7 @@ def qa_readiness(project_id:str,actor:Actor=Depends(current_actor)):
     return {"ready":True,"status":"READY","requirement_baseline_id":foundation.requirement_baseline_id,"delivery_baseline_id":foundation.delivery_baseline_id,"execution_snapshot_hash":foundation.execution_snapshot_hash,"execution_reconciliation_run_id":recon,"blocking_items":[]}
 
 
-@router.post("/qa-scopes:generate")
-def generate_scope(project_id:str,body:GenerateIn,idempotency_key:Optional[str]=Header(None),actor:Actor=Depends(current_actor)):
+def generate_scope_sync(project_id:str,body:GenerateIn,idempotency_key:Optional[str],actor:Actor):
     require_project(actor,project_id);key=require_key(idempotency_key)
     with transaction() as db:
         previous=idem_get(db,project_id,actor.id,"GENERATE_QA_SCOPE",key)
@@ -200,6 +199,18 @@ def generate_scope(project_id:str,body:GenerateIn,idempotency_key:Optional[str]=
         for item in output.items:insert_item(db,project_id,scope_id,item.model_dump(),f"ai:{run_id}","AI")
         content={"summary":output.summary,"risks":output.risks,"gaps":output.gaps,"items":[item_content(db,x) for x in db.execute("SELECT * FROM validation_items WHERE qa_scope_id=?",(scope_id,)).fetchall()]};db.execute("INSERT INTO qa_scope_revisions VALUES (?,?,?,?,?,?,?,?)",(uid("qrev"),scope_id,project_id,1,dumps(content),f"ai:{run_id}","AI",stamp))
         metrics=getattr(adapter,"last_metrics",None);values=metrics.as_dict() if metrics else {};db.execute("UPDATE qa_ai_runs SET qa_scope_id=?,status='SUCCEEDED',findings_json=?,input_tokens=?,cache_hit_tokens=?,output_tokens=?,total_tokens=?,latency_ms=?,provider_request_id=?,completed_at=? WHERE id=?",(scope_id,dumps(output.findings),values.get("input_tokens"),values.get("cache_hit_tokens"),values.get("output_tokens"),values.get("total_tokens"),values.get("latency_ms"),values.get("provider_request_id"),now(),run_id));result={"ai_run_id":run_id,"scope_id":scope_id,"qa_code":code,"status":"SUCCEEDED","item_count":len(output.items),"provider":adapter.provider,"model":adapter.model,"telemetry":values};audit(db,project_id,f"ai:{run_id}","AI","QA_SCOPE_AI_RUN_COMPLETED","QA_SCOPE",scope_id,detail={"item_count":len(output.items)});idem_put(db,project_id,actor.id,"GENERATE_QA_SCOPE",key,result);return result
+
+
+@router.post("/qa-scopes:generate", status_code=202)
+def generate_scope(project_id:str,body:GenerateIn,idempotency_key:Optional[str]=Header(None),actor:Actor=Depends(current_actor)):
+    from .jobs import enqueue
+    require_project(actor,project_id);key=require_key(idempotency_key)
+    with connect() as db: qa_foundation(db,project_id)
+    with transaction() as db:
+        previous=idem_get(db,project_id,actor.id,"QUEUE_QA_SCOPE",key)
+        if previous:return previous
+        result=enqueue(db,project_id,actor,"QA_SCOPE",body.model_dump());idem_put(db,project_id,actor.id,"QUEUE_QA_SCOPE",key,result)
+    return result
 
 
 @router.post("/qa-scopes",status_code=201)
@@ -432,8 +443,7 @@ def acceptance_foundation(db,project_id,readiness):
     return AcceptanceFoundationInput(project["name"],project["objective"],scope["requirement_baseline_id"],scope["delivery_baseline_id"],scope["id"],scope["current_revision"],readiness["execution_truth"],readiness["requirement_summary"],readiness["validation_summary"],readiness["evidence_summary"],readiness["failed_items"],readiness["blocked_items"],readiness["missing_evidence"],json.loads(scope["risks_json"]),drift,{"ready":readiness["ready"],"blocking_items":readiness["blocking_items"]})
 
 
-@router.post("/acceptance-packages:generate")
-def generate_package(project_id:str,body:GenerateIn,idempotency_key:Optional[str]=Header(None),actor:Actor=Depends(current_actor)):
+def generate_package_sync(project_id:str,body:GenerateIn,idempotency_key:Optional[str],actor:Actor):
     require_project(actor,project_id);key=require_key(idempotency_key)
     with transaction() as db:
         previous=idem_get(db,project_id,actor.id,"GENERATE_ACCEPTANCE_PACKAGE",key)
@@ -452,6 +462,20 @@ def generate_package(project_id:str,body:GenerateIn,idempotency_key:Optional[str
         version=db.execute("SELECT COALESCE(MAX(version),0)+1 FROM acceptance_packages WHERE project_id=?",(project_id,)).fetchone()[0];package_id=uid("apkg");summary={"requirement_readiness":output.requirement_readiness};validation={**readiness["validation_summary"],"narrative":output.validation_readiness};evidence={**readiness["evidence_summary"],"narrative":output.evidence_readiness};execution={"health":readiness["execution_truth"]["execution_health"],"narrative":output.execution_readiness}
         db.execute("UPDATE acceptance_packages SET status='STALE' WHERE project_id=? AND status='CURRENT'",(project_id,))
         db.execute("INSERT INTO acceptance_packages (id,project_id,version,requirement_baseline_id,delivery_baseline_id,qa_scope_id,qa_scope_revision,execution_snapshot_hash,validation_snapshot_hash,ai_run_id,status,executive_summary,requirement_summary_json,validation_summary_json,evidence_summary_json,execution_summary_json,critical_failures_json,critical_blockers_json,missing_evidence_json,residual_risks_json,recommendation,recommendation_basis,generated_by,generated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(package_id,project_id,version,scope["requirement_baseline_id"],scope["delivery_baseline_id"],scope["id"],scope["current_revision"],readiness["execution_snapshot_hash"],readiness["validation_snapshot_hash"],run_id,"CURRENT",output.executive_summary,dumps(summary),dumps(validation),dumps(evidence),dumps(execution),dumps(output.critical_failure_validation_item_ids),dumps(output.critical_blockers),dumps(output.missing_evidence_validation_item_ids),dumps(output.residual_risks),output.acceptance_recommendation,output.recommendation_basis,f"ai:{run_id}",stamp));metrics=getattr(adapter,"last_metrics",None);values=metrics.as_dict() if metrics else {};db.execute("UPDATE qa_ai_runs SET status='SUCCEEDED',findings_json=?,input_tokens=?,cache_hit_tokens=?,output_tokens=?,total_tokens=?,latency_ms=?,provider_request_id=?,completed_at=? WHERE id=?",(dumps(output.findings),values.get("input_tokens"),values.get("cache_hit_tokens"),values.get("output_tokens"),values.get("total_tokens"),values.get("latency_ms"),values.get("provider_request_id"),now(),run_id));result={"ai_run_id":run_id,"package_id":package_id,"version":version,"status":"SUCCEEDED","recommendation":output.acceptance_recommendation,"deterministic_ready":readiness["ready"],"telemetry":values};audit(db,project_id,f"ai:{run_id}","AI","ACCEPTANCE_PACKAGE_GENERATED","ACCEPTANCE_PACKAGE",package_id,detail={"recommendation":output.acceptance_recommendation,"deterministic_ready":readiness["ready"]});idem_put(db,project_id,actor.id,"GENERATE_ACCEPTANCE_PACKAGE",key,result);return result
+
+
+@router.post("/acceptance-packages:generate", status_code=202)
+def generate_package(project_id:str,body:GenerateIn,idempotency_key:Optional[str]=Header(None),actor:Actor=Depends(current_actor)):
+    from .jobs import enqueue
+    require_project(actor,project_id);key=require_key(idempotency_key)
+    with transaction() as db:
+        readiness=acceptance_readiness_value(db,project_id,False)
+        if not readiness.get("qa_scope_id"):raise HTTPException(409,"Committed QA Scope required")
+    with transaction() as db:
+        previous=idem_get(db,project_id,actor.id,"QUEUE_ACCEPTANCE_PACKAGE",key)
+        if previous:return previous
+        result=enqueue(db,project_id,actor,"ACCEPTANCE_PACKAGE",body.model_dump());idem_put(db,project_id,actor.id,"QUEUE_ACCEPTANCE_PACKAGE",key,result)
+    return result
 
 
 @router.post("/acceptance-packages",status_code=201)

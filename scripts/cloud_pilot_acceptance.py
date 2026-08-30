@@ -15,6 +15,7 @@ BASE_URL = os.environ["OIDA_PILOT_URL"].rstrip("/")
 API_URL = os.environ.get("OIDA_PILOT_API_URL", BASE_URL).rstrip("/")
 EMAIL = os.environ["OIDA_PILOT_EMAIL"]
 PASSWORD = os.environ["OIDA_PILOT_PASSWORD"]
+NEW_PASSWORD = os.environ.get("OIDA_PILOT_NEW_PASSWORD")
 
 
 def require(response: httpx.Response, *statuses: int) -> dict | list:
@@ -24,10 +25,23 @@ def require(response: httpx.Response, *statuses: int) -> dict | list:
     return response.json()
 
 
-def timed_post(client: httpx.Client, path: str, *, headers: dict[str, str], payload: dict) -> tuple[dict, float]:
+def async_ai(client: httpx.Client, observer: httpx.Client, project_id: str, path: str, *, headers: dict[str, str], payload: dict) -> tuple[dict, dict]:
     started = time.monotonic()
-    body = require(client.post(path, headers=headers, json=payload), 200)
-    return body, round(time.monotonic() - started, 2)
+    queued = require(client.post(path, headers=headers, json=payload), 202)
+    start_seconds = round(time.monotonic() - started, 2)
+    if queued.get("status") != "QUEUED": raise RuntimeError("AI start did not return QUEUED")
+    run_id = queued["ai_run_id"]; states=[]; observer_visible=False
+    deadline=time.monotonic()+900
+    while time.monotonic()<deadline:
+        run=require(client.get(f"/api/projects/{project_id}/ai-runs/{run_id}"),200)
+        observed=require(observer.get(f"/api/projects/{project_id}/ai-runs/{run_id}"),200)
+        observer_visible=observer_visible or observed["status"]==run["status"]
+        if not states or states[-1]!=run["status"]:states.append(run["status"])
+        if run["status"] in {"COMPLETED","FAILED"}:
+            if not run.get("result"):raise RuntimeError("terminal AI run has no durable result")
+            return run["result"],{"start_seconds":start_seconds,"total_seconds":round(time.monotonic()-started,2),"states":states,"observer_visible":observer_visible,"run_id":run_id}
+        time.sleep(3)
+    raise RuntimeError("AI run polling deadline exceeded")
 
 
 def main() -> None:
@@ -40,7 +54,19 @@ def main() -> None:
     ready = require(b.get("/ready"), 200)
     login_a_response = a.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
     actor_a = require(login_a_response, 200)
-    login_b_response = b.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
+    forced_password_change=False;force_change_blocked=False;session_rotated=False;old_password_rejected=False
+    active_password=PASSWORD
+    if actor_a.get("must_change_password"):
+        if not NEW_PASSWORD:raise RuntimeError("OIDA_PILOT_NEW_PASSWORD is required for first-login acceptance")
+        forced_password_change=True;force_change_blocked=a.get("/api/projects").status_code==403
+        old_cookie=a.cookies.get("oida_session")
+        require(a.post("/api/auth/password",json={"current_password":PASSWORD,"new_password":NEW_PASSWORD,"confirm_password":NEW_PASSWORD}),200)
+        stale=httpx.Client(base_url=API_URL,headers=common,timeout=timeout);stale.cookies.set("oida_session",old_cookie)
+        session_rotated=stale.get("/api/auth/me").status_code==401
+        require(a.post("/api/auth/logout"),200)
+        old_password_rejected=a.post("/api/auth/login",json={"email":EMAIL,"password":PASSWORD}).status_code==401
+        actor_a=require(a.post("/api/auth/login",json={"email":EMAIL,"password":NEW_PASSWORD}),200);active_password=NEW_PASSWORD
+    login_b_response = b.post("/api/auth/login", json={"email": EMAIL, "password": active_password})
     actor_b = require(login_b_response, 200)
     cookie = login_b_response.headers.get("set-cookie", "").lower()
     cookie_controls = all(flag in cookie for flag in ("secure", "httponly", "samesite=strict"))
@@ -70,7 +96,7 @@ def main() -> None:
     cross_scope = a.patch(f"/api/projects/{other['id']}/context/{context['id']}", json={"content": "must not move"})
     project_scope_enforced = cross_scope.status_code == 404
 
-    req_run, req_seconds = timed_post(a, f"/api/projects/{project_id}/ai/requirements:generate",
+    req_run, req_async = async_ai(a,b,project_id,f"/api/projects/{project_id}/ai/requirements:generate",
         headers={"Idempotency-Key": f"cloud-req-ai-{run}"},
         payload={"instruction": "Generate concise, testable, security-aware requirements for this real pilot."})
     if req_run.get("status") != "SUCCEEDED":
@@ -96,7 +122,7 @@ def main() -> None:
     gate1 = require(a.post(f"/api/projects/{project_id}/requirement-baselines:freeze",
         headers={"Idempotency-Key": f"cloud-gate1-{run}"}), 200)
 
-    solution_run, solution_seconds = timed_post(a, f"/api/projects/{project_id}/ai/solutions:generate",
+    solution_run, solution_async = async_ai(a,b,project_id,f"/api/projects/{project_id}/ai/solutions:generate",
         headers={"Idempotency-Key": f"cloud-solution-ai-{run}"}, payload={})
     if solution_run.get("status") != "SUCCEEDED":
         raise RuntimeError(f"solution AI failed: {solution_run.get('failure_code')}")
@@ -106,7 +132,7 @@ def main() -> None:
     solution = require(a.post(f"/api/projects/{project_id}/solution-candidates/{selected['id']}:commit",
         headers={"Idempotency-Key": f"cloud-solution-commit-{run}"}), 200)
 
-    delivery_run, delivery_seconds = timed_post(a, f"/api/projects/{project_id}/ai/delivery-plans:generate",
+    delivery_run, delivery_async = async_ai(a,b,project_id,f"/api/projects/{project_id}/ai/delivery-plans:generate",
         headers={"Idempotency-Key": f"cloud-delivery-ai-{run}"}, payload={})
     if delivery_run.get("status") != "SUCCEEDED":
         raise RuntimeError(f"delivery AI failed: {delivery_run.get('failure_code')}")
@@ -117,7 +143,7 @@ def main() -> None:
     gate2 = require(a.post(f"/api/projects/{project_id}/delivery-baselines:freeze",
         headers={"Idempotency-Key": f"cloud-gate2-{run}"}), 200)
 
-    execution_run, execution_seconds = timed_post(a, f"/api/projects/{project_id}/execution/materialization-plans:generate",
+    execution_run, execution_async = async_ai(a,b,project_id,f"/api/projects/{project_id}/execution/materialization-plans:generate",
         headers={"Idempotency-Key": f"cloud-execution-ai-{run}"},
         payload={"instruction": "Create an exact, conservative internal execution mapping."})
     if execution_run.get("status") != "SUCCEEDED":
@@ -148,13 +174,14 @@ def main() -> None:
         "second_session_visible": second_session_visible and context_visible,
         "cookie_controls": cookie_controls,
         "project_scope_enforced": project_scope_enforced,
+        "first_login":{"forced":forced_password_change,"project_blocked":force_change_blocked,"session_rotated":session_rotated,"old_password_rejected":old_password_rejected},
         "origin_control_status": no_origin.status_code,
         "safe_validation_error": safe_error and malformed.status_code == 422,
         "ai": {
-            "requirements": {"status": req_run["status"], "seconds": req_seconds, "candidate_count": len(candidates)},
-            "solutions": {"status": solution_run["status"], "seconds": solution_seconds, "candidate_count": len(solutions)},
-            "delivery": {"status": delivery_run["status"], "seconds": delivery_seconds, "candidate_count": len(delivery_candidates)},
-            "execution": {"status": execution_run["status"], "seconds": execution_seconds, "plan_item_count": len(plan["items"])},
+            "requirements": {"status": req_run["status"], **req_async, "candidate_count": len(candidates)},
+            "solutions": {"status": solution_run["status"], **solution_async, "candidate_count": len(solutions)},
+            "delivery": {"status": delivery_run["status"], **delivery_async, "candidate_count": len(delivery_candidates)},
+            "execution": {"status": execution_run["status"], **execution_async, "plan_item_count": len(plan["items"])},
         },
         "gates": {"gate1_ready": gate1_ready["ready"], "gate1": gate1["baseline_id"],
                   "gate2_ready": gate2_ready["ready"], "gate2": gate2["baseline_id"]},

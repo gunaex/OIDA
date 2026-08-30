@@ -25,6 +25,7 @@ class Actor:
     email: str
     display_name: str
     actor_type: str = "HUMAN"
+    must_change_password: bool = False
 
 
 def hash_password(password: str, salt: Optional[str] = None) -> str:
@@ -44,47 +45,53 @@ def verify_password(password: str, encoded: str) -> bool:
 
 def bootstrap_user() -> None:
     with transaction() as db:
-        row = db.execute("SELECT id FROM users WHERE email=?", (settings.bootstrap_email.lower(),)).fetchone()
+        row = db.execute("SELECT id,bootstrap_policy_applied FROM users WHERE email=?", (settings.bootstrap_email.lower(),)).fetchone()
         if not row:
             db.execute(
-                "INSERT INTO users VALUES (?,?,?,?,?,?)",
+                "INSERT INTO users (id,email,display_name,password_hash,actor_type,created_at,must_change_password,bootstrap_policy_applied,session_version) VALUES (?,?,?,?,?,?,?,?,?)",
                 (str(uuid.uuid4()), settings.bootstrap_email.lower(), settings.bootstrap_name,
-                 hash_password(settings.bootstrap_password), "HUMAN", now()),
+                 hash_password(settings.bootstrap_password), "HUMAN", now(), 1, 1, 1),
             )
+        elif not row["bootstrap_policy_applied"]:
+            db.execute("UPDATE users SET must_change_password=1,bootstrap_policy_applied=1 WHERE id=?", (row["id"],))
 
 
 def _encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
 
 
-def issue_session(actor_id: str) -> str:
-    payload = _encode(json.dumps({"sub": actor_id, "exp": int(time.time()) + 12 * 3600}, separators=(",", ":")).encode())
+def issue_session(actor_id: str, session_version: int = 1) -> str:
+    payload = _encode(json.dumps({"sub": actor_id, "sv": session_version, "exp": int(time.time()) + 12 * 3600}, separators=(",", ":")).encode())
     sig = _encode(hmac.new(settings.session_secret.encode(), payload.encode(), hashlib.sha256).digest())
     return f"{payload}.{sig}"
 
 
-def _decode_session(token: str) -> Optional[str]:
+def _decode_session(token: str):
     try:
         payload, sig = token.split(".", 1)
         expected = _encode(hmac.new(settings.session_secret.encode(), payload.encode(), hashlib.sha256).digest())
         if not hmac.compare_digest(sig, expected): return None
         raw = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
         data = json.loads(raw)
-        return data["sub"] if data["exp"] >= time.time() else None
+        return (data["sub"], data.get("sv", 1)) if data["exp"] >= time.time() else None
     except Exception:
         return None
 
 
 def current_actor(request: Request) -> Actor:
-    actor_id = _decode_session(request.cookies.get("oida_session", ""))
-    if not actor_id:
+    session = _decode_session(request.cookies.get("oida_session", ""))
+    if not session:
         log.warning(json.dumps({"action":"AUTHORIZATION_DENIED","actor_id":"ANONYMOUS","result":"BLOCKED_AUTH"}))
         raise HTTPException(401, "Missing or invalid authorization context")
+    actor_id, session_version = session
     with connect() as db:
-        row = db.execute("SELECT id,email,display_name,actor_type FROM users WHERE id=?", (actor_id,)).fetchone()
-    if not row or row["actor_type"] != "HUMAN":
+        row = db.execute("SELECT id,email,display_name,actor_type,must_change_password,session_version FROM users WHERE id=?", (actor_id,)).fetchone()
+    if not row or row["actor_type"] != "HUMAN" or row["session_version"] != session_version:
         raise HTTPException(401, "Authorization context is not an active human identity")
-    return Actor(**dict(row))
+    actor = Actor(**{k: row[k] for k in ("id","email","display_name","actor_type","must_change_password")})
+    if actor.must_change_password and request.url.path not in {"/api/auth/me", "/api/auth/logout", "/api/auth/password"}:
+        raise HTTPException(403, {"code":"PASSWORD_CHANGE_REQUIRED"})
+    return actor
 
 
 def require_project(actor: Actor, project_id: str, owner: bool = False):
